@@ -17,6 +17,8 @@
     "test:e2e": "playwright test",
     "db:up": "node scripts/db-compose.mjs up",
     "db:down": "node scripts/db-compose.mjs down",
+    "db:ps": "node scripts/db-compose.mjs ps",
+    "db:logs": "node scripts/db-compose.mjs logs",
     "db:check": "node --import tsx server/src/infrastructure/db-check-cli.ts",
     "prisma:validate": "node --env-file=server/.env node_modules/prisma/build/index.js validate",
     "smoke:providers": "npm run build -w shared && node --import tsx scripts/smoke/cli.ts"

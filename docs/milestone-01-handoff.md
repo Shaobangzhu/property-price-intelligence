@@ -1,5 +1,7 @@
 # Milestone 01 handoff
 
+This is the historical milestone-01 snapshot. See [milestone 01.5](milestone-01.5-handoff.md) for the current Docker and credential configuration status.
+
 ## Implemented
 
 Runnable npm workspace with React/Vite client, Express server, browser-safe shared contracts, local PostgreSQL Compose service, read-only readiness check, Prisma 6 groundwork, opt-in provider smoke CLI, focused offline tests, and one mocked browser navigation test. Placeholder Dashboard and History contain no property data. Local ignored env files were created with a random development database password and blank provider keys; existing files were not overwritten. No business schema or migration was created.

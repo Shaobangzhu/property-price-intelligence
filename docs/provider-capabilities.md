@@ -1,6 +1,6 @@
 # Provider capability findings
 
-Official documentation checked **2026-09-29**. “Documented” describes the provider reference; “observed” requires a live response and is **NOT RUN** here because keys and the user-selected address/coordinates are absent. Credential presence, when supplied later, does not establish access.
+Official documentation checked **2026-09-29**. “Documented” describes the provider reference; “observed” requires a live response and is **NOT RUN** here. Credentials are now configured in ignored local files, but milestone 01.5 made no live provider requests. Credential presence does not establish access.
 
 Implementation versions are pinned in the root lockfile. Prisma datasource syntax follows the [Prisma ORM v6 schema reference](https://www.prisma.io/docs/orm/v6/prisma-schema/overview); the client environment boundary follows the [Vite environment guide](https://vite.dev/guide/env-and-mode).
 
