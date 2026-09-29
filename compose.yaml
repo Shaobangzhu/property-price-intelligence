@@ -1,0 +1,23 @@
+name: ppi-local
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in root .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in root .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in root .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:?set POSTGRES_PORT in root .env}:5432"
+    volumes:
+      - ppi_pgdata:/var/lib/postgresql/data
+    networks:
+      - ppi_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  ppi_pgdata:
+networks:
+  ppi_network:

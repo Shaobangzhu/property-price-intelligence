@@ -1,0 +1,9 @@
+// Prisma 6.19 groundwork. Business models and the first migration belong to milestone 03.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}

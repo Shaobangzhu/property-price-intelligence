@@ -1,0 +1,3 @@
+# PPI repository instructions
+
+Milestone instructions govern scope; later features require their own task brief. Stack: npm workspaces, React/Vite, Express, TypeScript, PostgreSQL, Prisma 6 groundwork. Verify with `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, and optional `npm run test:e2e`. Preserve local work and do not touch sibling projects, unrelated databases, or Docker volumes. Do not print or commit secrets, connection strings, raw provider records, or Places content. Provider data must be represented truthfully: missing or nearby schools are not assigned schools; listing asks are not recorded sales. Places results remain transient under Esri terms. Live smoke requires explicit flag and environment gate, with no retries or fallback.

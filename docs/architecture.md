@@ -1,0 +1,9 @@
+# Milestone 01 architecture
+
+The browser is a Vite/React app with Dashboard and History placeholders. It imports only browser-safe Zod contracts from `@ppi/shared`. Express owns HTTP routes, CORS, security headers, request IDs, and safe errors. PostgreSQL is a dedicated `ppi-local` Compose service. A node-postgres pool performs the read-only readiness query. Prisma 6.12.0 has a datasource and generator declaration, but no business model, migration, generated client use, or repository yet. The first persistence design and migration belong to milestone 03.
+
+Future boundaries: routes handle HTTP; services orchestrate use cases; provider adapters normalize external data and enforce licensing; repositories persist permitted state; the pricing domain accepts and returns plain TypeScript data without Express, Prisma, React, or ArcGIS dependencies. This structure is a design boundary, not a set of empty modules.
+
+Future property profiles have a proposed 14-day cache policy; comparable sales, listings, school assignments, hazards, and Places require their own timestamps, provenance, and freshness rules. Recorded sale transaction prices and active/inactive listing asking prices are different evidence types. An inactive ask does not prove a sale. School coordinates identify locations, while attendance assignment requires authoritative assignment data; nearby schools cannot be relabeled. A missing school field is unknown, and even a school-related field needs semantic verification. Places results are transient display data under Esri terms, never stored or forwarded to OpenAI in this milestone.
+
+The smoke CLI is separate from app startup and HTTP routes. It requires two live gates, central request budgets, fixed destinations, timeouts, no retries, and no pagination. It reports field paths/types and aggregate counts only. Deterministic pricing and AI explanations are deferred; future AI output must explain computed prices, never invent them.
