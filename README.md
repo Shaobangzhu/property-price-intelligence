@@ -1,6 +1,6 @@
 # Property Price Intelligence
 
-PPI is a local-first prototype for real estate pricing decisions. The foundation has a React/Express workspace, a dedicated Docker PostgreSQL database, and gated provider capability checks. Dashboard and History are placeholders; no property or pricing workflow exists yet. Local-first means the app and database run locally, while later provider checks still require third-party services.
+PPI is a local-first prototype for real estate pricing decisions. It has a React/Express workspace, a dedicated Docker PostgreSQL database, gated provider capability checks, and a demo Dashboard and History UI. The UI uses synthetic fixtures only; property lookup, price values, and history records are not live provider or database results. Local-first means the app and database run locally, while later provider checks still require third-party services.
 
 ## Prerequisites
 
@@ -19,6 +19,10 @@ PPI reaches Docker PostgreSQL through `127.0.0.1:55435`, mapped to container por
 
 Open `http://localhost:5173`. API listens at `127.0.0.1:3001`; Vite proxies `/api` there. Vite uses strict port 5173. If it conflicts, resolve the conflict or deliberately update frontend origin, CORS, and ArcGIS basemap referrer restrictions before changing ports.
 
+## Explore the demo UI
+
+Dashboard opens with a synthetic property selected. Search accepts only the listed demo addresses; an unknown address displays an empty result and makes no provider request. Offer and Listing buttons open fixture-backed analysis dialogs. The map is a labeled schematic placeholder, and its context selector previews one fixture panel at a time. History provides synthetic records, filters, pagination, and a selected-record preview. Refresh, Delete, Regenerate, and Save are disabled until their integrations exist. The API badge checks only server liveness; a server failure never substitutes fixtures for a live request.
+
 ## Commands
 
 `npm run dev`, `dev:client`, `dev:server`, `build`, `start`, `typecheck`, `lint`, `test`, `test:e2e`, `db:up`, `db:down`, `db:ps`, `db:logs`, `db:check`, `prisma:validate`, and `smoke:providers` run from the repository root. `db:ps` shows only PPI service status; `db:logs` shows only recent PPI PostgreSQL logs. `db:check` runs a read-only `SELECT 1` with a short timeout. Database management commands check the Compose project name and dedicated port. The server validates `DATABASE_URL` targets the dedicated local PPI database.
@@ -27,4 +31,4 @@ To stop PPI PostgreSQL, run `npm run db:down`. It stops PPI's Compose service an
 
 `npm run smoke:providers` is a zero-request dry run. To permit a bounded live run, set `ALLOW_LIVE_API_TESTS=true` yourself in `server/.env` or the process environment, provide only the smoke inputs and keys you intend to test, then run `npm run smoke:providers -- --live`. The runner makes at most six requests, counts failures, disables retries, and writes no raw provider records. Leave the flag false for ordinary work. The browser `VITE_ARCGIS_API_KEY` is for basemap access only; `ARCGIS_PLACES_API_KEY` is server-only. Key presence never proves authentication.
 
-See [local database](docs/database-local.md), [architecture](docs/architecture.md), [provider findings](docs/provider-capabilities.md), and [milestone 01.5 handoff](docs/milestone-01.5-handoff.md).
+See [local database](docs/database-local.md), [architecture](docs/architecture.md), [provider findings](docs/provider-capabilities.md), [milestone 01.5 handoff](docs/milestone-01.5-handoff.md), and [milestone 02 handoff](docs/milestone-02-handoff.md).
