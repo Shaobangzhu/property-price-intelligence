@@ -1187,6 +1187,44 @@ td {
   font-weight:700;
   margin-bottom:16px
 }
+.pricing-controls {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-bottom:16px
+}
+.pricing-controls label {
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  color:#5f7691;
+  font-size:11px;
+  font-weight:700;
+  min-width:180px;
+  flex:1
+}
+.pricing-controls select,.pricing-controls input {
+  height:36px;
+  border:1px solid #cfdbe8;
+  border-radius:5px;
+  background:#fff;
+  color:#213b59;
+  padding:0 10px;
+  font:inherit
+}
+.pricing-meta,.pricing-context-note {
+  color:#738aa2;
+  font-size:11px;
+  line-height:1.5
+}
+.pricing-evidence-list {
+  margin:0;
+  padding-left:18px;
+  color:#61758e;
+  font-size:11px;
+  line-height:1.6;
+  overflow-wrap:anywhere
+}
 .analysis-summary-row {
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));

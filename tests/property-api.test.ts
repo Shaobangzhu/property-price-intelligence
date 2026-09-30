@@ -6,6 +6,7 @@ import type { MarketEvidenceService } from '../server/src/market/service.js';
 import type { AssignedSchoolsService } from '../server/src/context/schools.js';
 import type { GroceryContextService } from '../server/src/context/grocery.js';
 import type { HazardContextService } from '../server/src/context/hazards.js';
+import type { PricingPreviewService } from '../server/src/pricing/service.js';
 
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 function setup() {
@@ -21,8 +22,9 @@ function setup() {
   const schoolsService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null }) };
   const groceryService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_RESULTS', places: [], source: 'ARCGIS_PLACES', radiusMeters: 1600 }) };
   const hazardService = { getWildfire: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_COVERAGE' }), getFaults: vi.fn().mockResolvedValue({ propertyId: id, contextType: 'FAULT_TRACE', status: 'NO_NEARBY_FEATURES' }) };
-  const app = createApp({ checkDatabase: async () => true, origins: ['http://localhost:5173'], propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService });
-  return { app, service, marketService, schoolsService, groceryService, hazardService };
+  const pricingService = { preview: vi.fn().mockResolvedValue({ status: 'INSUFFICIENT_EVIDENCE', engineVersion: 'ppi-pricing-v1', referencePrice: null }) };
+  const app = createApp({ checkDatabase: async () => true, origins: ['http://localhost:5173'], propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService, pricingService: pricingService as unknown as PricingPreviewService });
+  return { app, service, marketService, schoolsService, groceryService, hazardService, pricingService };
 }
 
 describe('property REST routes', () => {
@@ -37,12 +39,15 @@ describe('property REST routes', () => {
     expect((await request(app).get(`/api/properties/${id}/nearby-places?category=schools`)).status).toBe(400);
     expect((await request(app).get('/api/properties/not-a-uuid/wildfire-context')).status).toBe(400);
     expect((await request(app).get('/api/properties/not-a-uuid/fault-context')).status).toBe(400);
+    expect((await request(app).post(`/api/properties/${id}/pricing/preview`).send({ mode: 'OFFER', strategyProfile: 'BALANCED', wildfire: 'High' })).status).toBe(400);
+    expect((await request(app).post(`/api/properties/${id}/pricing/preview`).send({ mode: 'OFFER', strategyProfile: 'BALANCED', maxBudget: -1 })).status).toBe(400);
+    expect((await request(app).post(`/api/properties/${id}/pricing/preview`).send({ mode: 'LISTING', strategyProfile: 'COMPETITIVE' })).status).toBe(400);
     expect(service.resolve).not.toHaveBeenCalled();
     expect(service.patch).not.toHaveBeenCalled();
   });
 
   it('routes resolve, pagination, view, patch, refresh, and delete', async () => {
-    const { app, service, marketService, schoolsService, groceryService, hazardService } = setup();
+    const { app, service, marketService, schoolsService, groceryService, hazardService, pricingService } = setup();
     const resolved = await request(app).post('/api/properties/resolve').send({ address: '123 Main St, Austin, TX 78701' });
     expect(resolved.status).toBe(200);
     expect(service.resolve).toHaveBeenCalledWith('123 Main St, Austin, TX 78701');
@@ -61,6 +66,11 @@ describe('property REST routes', () => {
     expect((await request(app).get(`/api/properties/${id}/fault-context`)).body.contextType).toBe('FAULT_TRACE');
     expect(hazardService.getWildfire).toHaveBeenCalledWith(id);
     expect(hazardService.getFaults).toHaveBeenCalledWith(id);
+    const preview = await request(app).post(`/api/properties/${id}/pricing/preview`).send({ mode: 'OFFER', strategyProfile: 'BALANCED', maxBudget: 400000 });
+    expect(preview.status).toBe(200);
+    expect(preview.headers['cache-control']).toContain('no-store');
+    expect(preview.body.engineVersion).toBe('ppi-pricing-v1');
+    expect(pricingService.preview).toHaveBeenCalledWith(id, { mode: 'OFFER', strategyProfile: 'BALANCED', maxBudget: 400000 });
     expect((await request(app).patch(`/api/properties/${id}`).send({ notes: 'reviewed', overrides: { bedrooms: 3 } })).status).toBe(200);
     expect(service.patch).toHaveBeenCalledWith(id, { notes: 'reviewed', overrides: { bedrooms: 3 } });
     expect((await request(app).post(`/api/properties/${id}/refresh`)).status).toBe(200);

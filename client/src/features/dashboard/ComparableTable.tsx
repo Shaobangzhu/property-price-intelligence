@@ -22,7 +22,7 @@ function EvidenceSection({ group, selectedId, onSelect }: { group: MarketEvidenc
 export function ComparableTable({ market, selectedId, onSelect }: { market: MarketState; selectedId: string | null; onSelect: (id: string) => void }) {
   const selected = market?.data ? [...market.data.recordedSales.candidates, ...market.data.activeListings.candidates].find(candidate => candidate.id === selectedId) : null;
   return <section className="card comparable-card" aria-labelledby="comparable-title">
-    <div className="card-heading"><div><span className="eyebrow">Market evidence</span><h2 id="comparable-title">Comparable Candidates</h2></div><span className="section-tag">No pricing analysis</span></div>
+    <div className="card-heading"><div><span className="eyebrow">Market evidence</span><h2 id="comparable-title">Comparable Candidates</h2></div><span className="section-tag">Candidate evidence</span></div>
     {market?.status === 'loading' ? <FeedbackState kind="loading" title="Loading market evidence" message="Checking saved sales and active listings." compact /> : market?.status === 'error' ? <FeedbackState kind="error" title="Market evidence unavailable" message="The property remains available. Try again later for nearby evidence." compact /> : market?.data ? <>
       <EvidenceSection group={market.data.recordedSales} selectedId={selectedId} onSelect={onSelect} />
       <EvidenceSection group={market.data.activeListings} selectedId={selectedId} onSelect={onSelect} />

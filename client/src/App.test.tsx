@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import type { PropertyEnvelope } from '@ppi/shared';
+import { calculatePricing, type PricingInput, type PropertyEnvelope } from '@ppi/shared';
 import { App } from './App.js';
 
 const firstId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -23,6 +23,17 @@ const marketResponse = (propertyId = firstId) => ({
   recordedSales: { kind: 'RECORDED_SALES', candidates: [{ id: 'recorded_sale:sale1', evidenceType: 'RECORDED_SALE', providerId: 'sale1', address: '125 Main St, Austin, TX 78701', latitude: 30.11, longitude: -97.11, propertyType: 'Condo', bedrooms: 2, bathrooms: null, livingAreaSqft: 1180, lotSizeSqft: null, yearBuilt: null, price: 410000, eventDate: '2026-06-01T00:00:00.000Z', distanceMiles: 0.91, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-06T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: 365 }, errorCode: null },
   activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [{ id: 'active_asking_price:listing1', evidenceType: 'ACTIVE_ASKING_PRICE', providerId: 'listing1', address: '130 Main St, Austin, TX 78701', latitude: 30.12, longitude: -97.12, propertyType: 'Condo', bedrooms: null, bathrooms: 2, livingAreaSqft: null, lotSizeSqft: null, yearBuilt: null, price: 450000, eventDate: '2026-09-01T00:00:00.000Z', distanceMiles: 1.2, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-09-30T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: null }, errorCode: null }
 });
+const pricingResponse = (mode: 'OFFER' | 'LISTING', strategyProfile: PricingInput['strategyProfile'], maxBudget: number | null = null) => {
+  const sale = (id: string, price: number, age: number, distance: number) => ({ id, providerId: id, address: `${id} Main St`,
+    evidenceType: 'RECORDED_SALE' as const, propertyType: 'Condo', price, eventDate: new Date(Date.parse('2026-09-29T00:00:00.000Z') - age * 86_400_000).toISOString(),
+    distanceMiles: distance, livingAreaSqft: 1200, bedrooms: 2, bathrooms: 2 });
+  const input: PricingInput = { subject: { id: firstId, propertyType: 'Condo', livingAreaSqft: 1200, bedrooms: 2, bathrooms: 2,
+    currentListPrice: null, overrideFields: [] }, recordedSales: [sale('a', 400000, 30, 0), sale('b', 420000, 60, 0.5), sale('c', 440000, 90, 1)],
+    activeListings: [], mode, strategyProfile, maxBudget, asOf: '2026-09-29T00:00:00.000Z',
+    metadata: { propertyFreshness: 'FRESH', salesFreshness: 'FRESH', listingsFreshness: 'FRESH', salesSource: 'RENTCAST',
+      listingsSource: 'RENTCAST', searchRadiusMiles: 2, saleDateRangeDays: 365 } };
+  return calculatePricing(input);
+};
 const renderAt = (path = '/dashboard') => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -32,6 +43,7 @@ beforeEach(() => {
     if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
     if (url.includes('/properties?')) return Response.json({ items: [], total: 0, page: 1, pageSize: 5 });
     if (url.includes('/market-context')) return Response.json(marketResponse());
+    if (url.includes('/pricing/preview')) { const body = JSON.parse(String(init?.body)); return Response.json(pricingResponse(body.mode, body.strategyProfile, body.maxBudget ?? null)); }
     if (url.includes('/assigned-schools')) return Response.json({ propertyId: firstId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null });
     if (url.includes('/nearby-places')) return Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 });
     if (url.includes('/wildfire-context')) return Response.json({ propertyId: firstId, status: 'INSIDE_DISPLAYED_ZONE', classification: 'High', responsibilityArea: 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'effective 2024-04-01', checkedAt: '2026-09-29T12:00:00.000Z' });
@@ -67,9 +79,30 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: /Recorded sale marker: 125 Main/ }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: /Active listing marker: 130 Main/ }));
     expect(screen.getByRole('row', { name: /130 Main/ }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Offer Price' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Offer Price' }).hasAttribute('disabled')).toBe(false);
     expect(screen.getAllByText('Not analyzed', { exact: true }).length).toBe(2);
     expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/properties/resolve'))).toHaveLength(1);
+  });
+
+  it('opens deterministic Offer and Listing previews with user strategy controls', async () => {
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('button', { name: 'Offer Price' });
+    fireEvent.click(screen.getByRole('button', { name: 'Offer Price' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Offer Price Analysis' });
+    await within(dialog).findByText('ppi-pricing-v1', { exact: false });
+    expect(dialog.textContent).toContain('$410,000');
+    fireEvent.change(within(dialog).getByRole('combobox', { name: 'Strategy profile' }), { target: { value: 'COMPETITIVE' } });
+    await waitFor(() => expect(dialog.textContent).toContain('$420,000'));
+    fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'Maximum budget' }), { target: { value: '415000' } });
+    await waitFor(() => expect(dialog.textContent).toContain('$415,000'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Listing Price' }));
+    const listing = await screen.findByRole('dialog', { name: 'Listing Price Analysis' });
+    fireEvent.change(within(listing).getByRole('combobox', { name: 'Strategy profile' }), { target: { value: 'TEST_MARKET' } });
+    await waitFor(() => expect(listing.textContent).toContain('$420,000'));
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/pricing/preview')).length).toBeGreaterThanOrEqual(4);
   });
 
   it('switches one map context at a time and turns the active layer off', async () => {

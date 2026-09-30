@@ -144,3 +144,39 @@ export const OfficialGisLayers = {
   wildfireLra: 'https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/FHSALRA25_v1_All/FeatureServer/0',
   faultTraces: 'https://gis.conservation.ca.gov/server/rest/services/CGS/FaultActivityMapCA/FeatureServer/21'
 } as const;
+
+export const PricingPreviewRequest = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('OFFER'), strategyProfile: z.enum(['CONSERVATIVE', 'BALANCED', 'COMPETITIVE']), maxBudget: z.number().finite().positive().max(1_000_000_000).nullable().optional() }).strict(),
+  z.object({ mode: z.literal('LISTING'), strategyProfile: z.enum(['QUICK_SALE', 'BALANCED', 'TEST_MARKET']) }).strict()
+]);
+export type PricingPreviewRequest = z.infer<typeof PricingPreviewRequest>;
+const PriceRange = z.tuple([z.number().finite().nonnegative(), z.number().finite().nonnegative()]);
+const PricingStrategyResult = z.object({
+  status: z.enum(['READY', 'BUDGET_BELOW_REFERENCE_RANGE']), strategyProfile: z.enum(['CONSERVATIVE', 'BALANCED', 'COMPETITIVE', 'QUICK_SALE', 'TEST_MARKET']),
+  recommendedRange: PriceRange.nullable(), suggestedPrice: z.number().finite().nonnegative().nullable(), reasonCodes: z.array(z.string()), constraints: z.array(z.string())
+});
+export const PricingPreviewResponse = z.object({
+  status: z.enum(['READY', 'INSUFFICIENT_EVIDENCE']), engineVersion: z.literal('ppi-pricing-v1'),
+  referencePrice: z.number().finite().nonnegative().nullable(), referenceRange: PriceRange.nullable(), evidenceQuality: z.enum(['STRONG', 'MODERATE', 'LIMITED', 'INSUFFICIENT']),
+  includedComparables: z.array(z.object({ candidateId: z.string(), reasonCode: z.literal('INCLUDED'), soldPrice: z.number().finite().positive(), pricePerSqft: z.number().finite().positive(),
+    ageDays: z.number().int().nonnegative(), distanceMiles: z.number().finite().nonnegative(), sqftRatio: z.number().finite().positive(),
+    factors: z.object({ distance: z.number().min(0).max(1), recency: z.number().min(0).max(1), sizeSimilarity: z.number().min(0).max(1) }),
+    rawWeight: z.number().finite().nonnegative(), normalizedWeight: z.number().finite().nonnegative(), missingOptionalFields: z.number().int().min(0).max(2) })),
+  excludedComparables: z.array(z.object({ candidateId: z.string(), reasonCode: z.string() })),
+  activeListingContext: z.array(z.object({ candidateId: z.string(), reasonCode: z.literal('ACTIVE_ASK_CONTEXT_ONLY'), askingPrice: z.number().finite().positive().nullable(), position: z.enum(['BELOW_RANGE', 'WITHIN_RANGE', 'ABOVE_RANGE', 'UNPRICED', 'REFERENCE_UNAVAILABLE']) })),
+  offerResult: PricingStrategyResult.nullable(), listingResult: PricingStrategyResult.nullable(),
+  assumptions: z.array(z.string()), warnings: z.array(z.string()), reasonCodes: z.array(z.string()),
+  calculationTrace: z.object({ subjectAreaSqft: z.number().finite().positive().nullable(), configuredSearchRadiusMiles: z.number().finite().positive().nullable(),
+    configuredSaleDateRangeDays: z.number().int().positive().nullable(), eligibleCount: z.number().int().nonnegative(), selectedCount: z.number().int().nonnegative(),
+    weightedMedianPricePerSqft: z.number().finite().positive().nullable(), weightedP20PricePerSqft: z.number().finite().positive().nullable(),
+    weightedP80PricePerSqft: z.number().finite().positive().nullable(), dispersionRatio: z.number().finite().nonnegative().nullable(),
+    missingOptionalFieldRate: z.number().min(0).max(1).nullable(), medianAgeDays: z.number().int().nonnegative().nullable(),
+    medianDistanceMiles: z.number().finite().nonnegative().nullable(), rounding: z.literal('NEAREST_100_DOLLARS'),
+    config: z.object({ engineVersion: z.literal('ppi-pricing-v1'), maxSaleAgeDays: z.number().int().positive(), maxDistanceMiles: z.number().positive(),
+      minSqftRatio: z.number().positive(), maxSqftRatio: z.number().positive(), maxBedroomDifference: z.number().nonnegative(),
+      maxBathroomDifference: z.number().nonnegative(), minimumComparableCount: z.number().int().positive(), maximumComparableCount: z.number().int().positive(),
+      maxPricePerSqftMedianRatio: z.number().positive() }) })
+});
+export type PricingPreviewResponse = z.infer<typeof PricingPreviewResponse>;
+export { calculatePricing, ENGINE_VERSION, PRICING_CONFIG_V1 } from './pricing.js';
+export type { PricingInput, PricingEngineResult, PricingConfig, IncludedComparable, ExcludedComparable } from './pricing.js';

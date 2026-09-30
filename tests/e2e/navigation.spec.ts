@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { calculatePricing, type PricingInput } from '@ppi/shared';
 
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const address = '123 Main St, Apt 2, Austin, TX 78701';
@@ -16,6 +17,9 @@ const makeRecord = () => ({
 const market = () => ({ propertyId: id,
   recordedSales: { kind: 'RECORDED_SALES', candidates: [{ id: 'recorded_sale:one', evidenceType: 'RECORDED_SALE', providerId: 'one', address: '125 Main St, Austin, TX 78701', latitude: 30.11, longitude: -97.11, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1180, lotSizeSqft: null, yearBuilt: null, price: 410000, eventDate: '2026-06-01T00:00:00.000Z', distanceMiles: 0.91, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-06T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: 365 }, errorCode: null },
   activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [{ id: 'active_asking_price:two', evidenceType: 'ACTIVE_ASKING_PRICE', providerId: 'two', address: '130 Main St, Austin, TX 78701', latitude: 30.12, longitude: -97.12, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1200, lotSizeSqft: null, yearBuilt: null, price: 450000, eventDate: '2026-09-01T00:00:00.000Z', distanceMiles: 1.2, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-09-30T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: null }, errorCode: null } });
+const pricing = (): PricingInput => ({ subject: { id, propertyType: 'Condo', livingAreaSqft: 1200, bedrooms: 2, bathrooms: 2, currentListPrice: null, overrideFields: [] },
+  recordedSales: [], activeListings: [], mode: 'OFFER', strategyProfile: 'BALANCED', maxBudget: null, asOf: '2026-09-29T12:00:00.000Z',
+  metadata: { propertyFreshness: 'FRESH', salesFreshness: 'FRESH', listingsFreshness: 'FRESH', salesSource: 'RENTCAST', listingsSource: 'RENTCAST', searchRadiusMiles: 2, saleDateRangeDays: 365 } });
 
 test('searches a subject and manages its saved History record without external calls', async ({ page }) => {
   let record = makeRecord();
@@ -33,6 +37,7 @@ test('searches a subject and manages its saved History record without external c
     else if (url.pathname.endsWith('/nearby-places')) body = { propertyId: id, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 };
     else if (url.pathname.endsWith('/wildfire-context')) body = { propertyId: id, status: 'INSIDE_DISPLAYED_ZONE', classification: 'High', responsibilityArea: 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'effective 2024-04-01', checkedAt: '2026-09-29T12:00:00.000Z' };
     else if (url.pathname.endsWith('/fault-context')) body = { propertyId: id, contextType: 'FAULT_TRACE', status: 'NEAREST_MAPPED_FAULT', nearestFeatureName: 'Serra fault', distanceMiles: 7.13, searchRadiusMiles: 20, sourceName: 'California Geological Survey 2010 Fault Activity Map — Quaternary Faults', sourceVersion: '2010 map', checkedAt: '2026-09-29T12:00:00.000Z' };
+    else if (url.pathname.endsWith('/pricing/preview')) body = calculatePricing(pricing());
     else if (url.pathname.endsWith('/refresh') && method === 'POST') { record.cache.cacheStatus = 'REFRESHED'; body = record; }
     else if (method === 'PATCH') { record.property.notes = (route.request().postDataJSON() as { notes: string }).notes; body = record; }
     else if (method === 'DELETE') { saved = false; status = 204; body = null; }
@@ -70,7 +75,11 @@ test('searches a subject and manages its saved History record without external c
   await page.getByRole('button', { name: 'Faults', exact: true }).click();
   await expect(page.getByTestId('government-overlay')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Offer Price' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Offer Price' }).click();
+  const pricingDialog = page.getByRole('dialog', { name: 'Offer Price Analysis' });
+  await expect(pricingDialog.getByText('Insufficient evidence', { exact: true })).toBeVisible();
+  await expect(pricingDialog.getByText('Not available', { exact: true }).first()).toBeVisible();
+  await pricingDialog.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('link', { name: 'History' }).click();
   await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
   await page.getByRole('row', { name: /123 Main St/ }).getByRole('button', { name: 'View' }).click();

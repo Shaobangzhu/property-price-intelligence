@@ -1,4 +1,4 @@
-import { ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PropertyPatchInput } from '@ppi/shared';
+import { ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
 
 const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 
@@ -24,6 +24,10 @@ export function getAssignedSchools(id: string, signal?: AbortSignal) { return re
 export function getGroceryPlaces(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/nearby-places?category=grocery`, GroceryResponse, { signal, cache: 'no-store' }); }
 export function getWildfireContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/wildfire-context`, WildfireContextResponse, { signal }); }
 export function getFaultContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/fault-context`, FaultContextResponse, { signal }); }
+export function previewPricing(id: string, payload: PricingPreviewRequest, signal?: AbortSignal) {
+  return request(`/properties/${encodeURIComponent(id)}/pricing/preview`, PricingPreviewResponse,
+    { method: 'POST', body: JSON.stringify(payload), signal, cache: 'no-store' });
+}
 export function listProperties(options: { page: number; pageSize: number; search: string }, signal?: AbortSignal) {
   const query = new URLSearchParams({ page: String(options.page), pageSize: String(options.pageSize), search: options.search });
   return request(`/properties?${query}`, PropertyListResponse, { signal });
