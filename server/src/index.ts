@@ -9,6 +9,7 @@ import { RentCastMarketProvider } from './market/provider.js';
 import { MarketEvidenceService, parseMarketPolicy } from './market/service.js';
 import { AssignedSchoolsService, UnavailableAssignmentSource } from './context/schools.js';
 import { ArcGisPlacesProvider, GroceryContextService, parseGroceryPolicy } from './context/grocery.js';
+import { CalFireWildfireProvider, CgsFaultProvider, HazardContextService } from './context/hazards.js';
 
 async function main() {
   const config = parseServerConfig(loadServerEnv());
@@ -19,7 +20,8 @@ async function main() {
   const marketService = new MarketEvidenceService(propertyRepository, new PgMarketRepository(db.pool), new RentCastMarketProvider(config.RENTCAST_API_KEY), parseMarketPolicy(process.env));
   const schoolsService = new AssignedSchoolsService(propertyRepository, new UnavailableAssignmentSource());
   const groceryService = new GroceryContextService(propertyRepository, new ArcGisPlacesProvider(config.ARCGIS_PLACES_API_KEY), parseGroceryPolicy(process.env));
-  const app = createApp({ checkDatabase: db.check, origins: config.origins, propertyService, marketService, schoolsService, groceryService, log: entry => process.stderr.write(JSON.stringify(entry) + '\n') });
+  const hazardService = new HazardContextService(propertyRepository, new CalFireWildfireProvider(), new CgsFaultProvider());
+  const app = createApp({ checkDatabase: db.check, origins: config.origins, propertyService, marketService, schoolsService, groceryService, hazardService, log: entry => process.stderr.write(JSON.stringify(entry) + '\n') });
   const server = app.listen(config.PORT, config.HOST, () => process.stdout.write(`PPI API listening on ${config.HOST}:${config.PORT}\n`));
   let closing = false;
   const shutdown = () => { if (closing) return; closing = true; server.close(async () => { await db.close(); process.exitCode = 0; }); setTimeout(() => { process.exitCode = 1; server.closeAllConnections(); }, 5000).unref(); };

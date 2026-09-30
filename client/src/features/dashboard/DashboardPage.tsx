@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { MapContext, MarketContextResponse, PropertyEnvelope } from '@ppi/shared';
-import { ApiClientError, apiErrorMessage, getAssignedSchools, getGroceryPlaces, getMarketContext, resolveProperty } from '../../api/properties.js';
+import { ApiClientError, apiErrorMessage, getAssignedSchools, getFaultContext, getGroceryPlaces, getMarketContext, getWildfireContext, resolveProperty } from '../../api/properties.js';
 import { FeedbackState } from '../../components/FeedbackState.js';
 import { PropertySummary } from './PropertySummary.js';
 import { MapShell } from '../map/MapShell.js';
@@ -45,15 +45,22 @@ export function DashboardPage() {
   }, [record?.property.id]);
   useEffect(() => {
     const propertyId = record?.property.id;
-    if (!propertyId || (activeContext !== 'schools' && activeContext !== 'grocery')) { setContextState(null); return; }
+    if (!propertyId || !activeContext) { setContextState(null); return; }
     const controller = new AbortController();
     contextController.current = controller;
     const context = activeContext;
-    setContextState({ propertyId, context, status: 'loading', schools: null, grocery: null });
-    const operation = context === 'schools' ? getAssignedSchools(propertyId, controller.signal).then(schools => ({ schools, grocery: null }))
-      : getGroceryPlaces(propertyId, controller.signal).then(grocery => ({ schools: null, grocery }));
-    operation.then(data => { if (!controller.signal.aborted && (data.schools?.propertyId === propertyId || data.grocery?.propertyId === propertyId)) setContextState({ propertyId, context, status: 'ready', ...data }); })
-      .catch(() => { if (!controller.signal.aborted) setContextState({ propertyId, context, status: 'error', schools: null, grocery: null }); });
+    const empty = { schools: null, grocery: null, wildfire: null, faults: null };
+    setContextState({ propertyId, context, status: 'loading', ...empty });
+    const load = async (): Promise<Pick<ContextState, 'schools' | 'grocery' | 'wildfire' | 'faults'>> => {
+      if (context === 'schools') return { ...empty, schools: await getAssignedSchools(propertyId, controller.signal) };
+      if (context === 'grocery') return { ...empty, grocery: await getGroceryPlaces(propertyId, controller.signal) };
+      if (context === 'wildfire') return { ...empty, wildfire: await getWildfireContext(propertyId, controller.signal) };
+      return { ...empty, faults: await getFaultContext(propertyId, controller.signal) };
+    };
+    void load().then(data => {
+      const responseId = data.schools?.propertyId ?? data.grocery?.propertyId ?? data.wildfire?.propertyId ?? data.faults?.propertyId;
+      if (!controller.signal.aborted && responseId === propertyId) setContextState({ propertyId, context, status: 'ready', ...data });
+    }).catch(() => { if (!controller.signal.aborted) setContextState({ propertyId, context, status: 'error', ...empty }); });
     return () => controller.abort();
   }, [record?.property.id, activeContext]);
 

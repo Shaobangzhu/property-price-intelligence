@@ -5,6 +5,7 @@ import { PropertyError, type PropertyService } from '../server/src/properties/se
 import type { MarketEvidenceService } from '../server/src/market/service.js';
 import type { AssignedSchoolsService } from '../server/src/context/schools.js';
 import type { GroceryContextService } from '../server/src/context/grocery.js';
+import type { HazardContextService } from '../server/src/context/hazards.js';
 
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 function setup() {
@@ -19,8 +20,9 @@ function setup() {
   const marketService = { get: vi.fn().mockResolvedValue({ propertyId: id, recordedSales: { kind: 'RECORDED_SALES', candidates: [] }, activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [] } }) };
   const schoolsService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null }) };
   const groceryService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_RESULTS', places: [], source: 'ARCGIS_PLACES', radiusMeters: 1600 }) };
-  const app = createApp({ checkDatabase: async () => true, origins: ['http://localhost:5173'], propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService });
-  return { app, service, marketService, schoolsService, groceryService };
+  const hazardService = { getWildfire: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_COVERAGE' }), getFaults: vi.fn().mockResolvedValue({ propertyId: id, contextType: 'FAULT_TRACE', status: 'NO_NEARBY_FEATURES' }) };
+  const app = createApp({ checkDatabase: async () => true, origins: ['http://localhost:5173'], propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService });
+  return { app, service, marketService, schoolsService, groceryService, hazardService };
 }
 
 describe('property REST routes', () => {
@@ -33,12 +35,14 @@ describe('property REST routes', () => {
     expect((await request(app).get('/api/properties/not-a-uuid')).status).toBe(400);
     expect((await request(app).get('/api/properties/not-a-uuid/market-context')).status).toBe(400);
     expect((await request(app).get(`/api/properties/${id}/nearby-places?category=schools`)).status).toBe(400);
+    expect((await request(app).get('/api/properties/not-a-uuid/wildfire-context')).status).toBe(400);
+    expect((await request(app).get('/api/properties/not-a-uuid/fault-context')).status).toBe(400);
     expect(service.resolve).not.toHaveBeenCalled();
     expect(service.patch).not.toHaveBeenCalled();
   });
 
   it('routes resolve, pagination, view, patch, refresh, and delete', async () => {
-    const { app, service, marketService, schoolsService, groceryService } = setup();
+    const { app, service, marketService, schoolsService, groceryService, hazardService } = setup();
     const resolved = await request(app).post('/api/properties/resolve').send({ address: '123 Main St, Austin, TX 78701' });
     expect(resolved.status).toBe(200);
     expect(service.resolve).toHaveBeenCalledWith('123 Main St, Austin, TX 78701');
@@ -53,6 +57,10 @@ describe('property REST routes', () => {
     expect(places.body.status).toBe('NO_RESULTS');
     expect(places.headers['cache-control']).toContain('no-store');
     expect(groceryService.get).toHaveBeenCalledWith(id);
+    expect((await request(app).get(`/api/properties/${id}/wildfire-context`)).body.status).toBe('NO_COVERAGE');
+    expect((await request(app).get(`/api/properties/${id}/fault-context`)).body.contextType).toBe('FAULT_TRACE');
+    expect(hazardService.getWildfire).toHaveBeenCalledWith(id);
+    expect(hazardService.getFaults).toHaveBeenCalledWith(id);
     expect((await request(app).patch(`/api/properties/${id}`).send({ notes: 'reviewed', overrides: { bedrooms: 3 } })).status).toBe(200);
     expect(service.patch).toHaveBeenCalledWith(id, { notes: 'reviewed', overrides: { bedrooms: 3 } });
     expect((await request(app).post(`/api/properties/${id}/refresh`)).status).toBe(200);

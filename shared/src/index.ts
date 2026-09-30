@@ -122,3 +122,25 @@ export const GroceryResponse = z.object({
   places: z.array(GroceryPlace), source: z.literal('ARCGIS_PLACES'), radiusMeters: z.number().int().positive()
 });
 export type GroceryResponse = z.infer<typeof GroceryResponse>;
+
+export const WildfireContextResponse = z.object({
+  propertyId: PropertyId, status: z.enum(['INSIDE_DISPLAYED_ZONE', 'OUTSIDE_DISPLAYED_ZONE', 'NO_COVERAGE', 'NO_COORDINATES', 'UNAVAILABLE']),
+  classification: z.enum(['Moderate', 'High', 'Very High']).nullable(), responsibilityArea: z.enum(['SRA', 'LRA', 'FRA']).nullable(),
+  sourceName: z.string(), sourceVersion: z.string().nullable(), checkedAt: z.iso.datetime()
+});
+export type WildfireContextResponse = z.infer<typeof WildfireContextResponse>;
+export const FaultContextResponse = z.object({
+  propertyId: PropertyId, contextType: z.literal('FAULT_TRACE'),
+  status: z.enum(['NEAREST_MAPPED_FAULT', 'NO_NEARBY_FEATURES', 'NO_COVERAGE', 'NO_COORDINATES', 'UNAVAILABLE']),
+  nearestFeatureName: z.string().nullable(), distanceMiles: z.number().nonnegative().nullable(), searchRadiusMiles: z.number().positive(),
+  sourceName: z.string(), sourceVersion: z.string().nullable(), checkedAt: z.iso.datetime()
+});
+export type FaultContextResponse = z.infer<typeof FaultContextResponse>;
+
+// Public California government feature services, verified in the Milestone 06 source register.
+export const OfficialGisLayers = {
+  responsibility: 'https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/SRA_for_FHSZ_in_LRA/FeatureServer/0',
+  wildfireSra: 'https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/FHSZSRA_23_3/FeatureServer/0',
+  wildfireLra: 'https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/FHSALRA25_v1_All/FeatureServer/0',
+  faultTraces: 'https://gis.conservation.ca.gov/server/rest/services/CGS/FaultActivityMapCA/FeatureServer/21'
+} as const;

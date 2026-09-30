@@ -672,6 +672,29 @@ p {
 .grocery-dot {
   background:#bf5268
 }
+.wildfire-dot {
+  background:#dc7752
+}
+.legend-line {
+  display:inline-block;
+  width:11px;
+  border-top:2px solid
+}
+.fault-line {
+  color:#654675
+}
+.map-overlay-notice {
+  position:absolute;
+  left:10px;
+  bottom:10px;
+  max-width:260px;
+  padding:7px 9px;
+  border-radius:5px;
+  background:#fffdf8;
+  color:#725234;
+  font-size:10px;
+  box-shadow:0 1px 6px #0002
+}
 .context-dot {
   background:#efad56
 }
@@ -734,6 +757,37 @@ p {
   margin:3px 0;
   color:#6f8298;
   font-size:10px
+}
+.hazard-results {
+  color:#516982;
+  font-size:11px
+}
+.hazard-summary {
+  margin:0 0 12px;
+  padding:10px 12px;
+  border-radius:6px;
+  background:#f3f6fa;
+  line-height:1.45
+}
+.hazard-results dl {
+  display:grid;
+  grid-template-columns:minmax(95px, 1fr) 1.4fr;
+  gap:8px 10px;
+  margin:0
+}
+.hazard-results dt {
+  color:#8294a6
+}
+.hazard-results dd {
+  margin:0;
+  color:#344c67;
+  overflow-wrap:anywhere
+}
+.hazard-disclaimer {
+  margin:15px 0 0;
+  color:#8294a6;
+  font-size:10px;
+  line-height:1.45
 }
 .context-icon {
   flex:none;

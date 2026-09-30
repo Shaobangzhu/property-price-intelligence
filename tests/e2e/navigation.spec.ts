@@ -31,6 +31,8 @@ test('searches a subject and manages its saved History record without external c
     else if (url.pathname.endsWith('/market-context')) body = market();
     else if (url.pathname.endsWith('/assigned-schools')) body = { propertyId: id, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null };
     else if (url.pathname.endsWith('/nearby-places')) body = { propertyId: id, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 };
+    else if (url.pathname.endsWith('/wildfire-context')) body = { propertyId: id, status: 'INSIDE_DISPLAYED_ZONE', classification: 'High', responsibilityArea: 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'effective 2024-04-01', checkedAt: '2026-09-29T12:00:00.000Z' };
+    else if (url.pathname.endsWith('/fault-context')) body = { propertyId: id, contextType: 'FAULT_TRACE', status: 'NEAREST_MAPPED_FAULT', nearestFeatureName: 'Serra fault', distanceMiles: 7.13, searchRadiusMiles: 20, sourceName: 'California Geological Survey 2010 Fault Activity Map — Quaternary Faults', sourceVersion: '2010 map', checkedAt: '2026-09-29T12:00:00.000Z' };
     else if (url.pathname.endsWith('/refresh') && method === 'POST') { record.cache.cacheStatus = 'REFRESHED'; body = record; }
     else if (method === 'PATCH') { record.property.notes = (route.request().postDataJSON() as { notes: string }).notes; body = record; }
     else if (method === 'DELETE') { saved = false; status = 204; body = null; }
@@ -40,6 +42,7 @@ test('searches a subject and manages its saved History record without external c
   });
   await page.goto('/dashboard?mapTestMode=1');
   await expect(page.getByText('No property selected')).toBeVisible();
+  await expect(page.getByText('API: available')).toBeVisible();
   await page.getByRole('textbox', { name: 'Search a property address' }).fill(address);
   await page.getByRole('button', { name: 'Search' }).click();
   await expect(page.getByRole('heading', { name: address })).toBeVisible();
@@ -57,6 +60,15 @@ test('searches a subject and manages its saved History record without external c
   await expect(page.getByRole('button', { name: 'Select grocery Market One' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Grocery', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Grocery marker: Market One' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Wildfire', exact: true }).click();
+  await expect(page.getByText('Subject point intersects a displayed High Fire Hazard Severity Zone.')).toBeVisible();
+  await expect(page.getByTestId('government-overlay')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Faults', exact: true }).click();
+  await expect(page.getByText('Serra fault')).toBeVisible();
+  await expect(page.getByTestId('government-overlay')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Faults', exact: true }).click();
+  await expect(page.getByTestId('government-overlay')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Offer Price' })).toBeDisabled();
   await page.getByRole('link', { name: 'History' }).click();

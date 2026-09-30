@@ -34,6 +34,8 @@ beforeEach(() => {
     if (url.includes('/market-context')) return Response.json(marketResponse());
     if (url.includes('/assigned-schools')) return Response.json({ propertyId: firstId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null });
     if (url.includes('/nearby-places')) return Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 });
+    if (url.includes('/wildfire-context')) return Response.json({ propertyId: firstId, status: 'INSIDE_DISPLAYED_ZONE', classification: 'High', responsibilityArea: 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'effective 2024-04-01', checkedAt: '2026-09-29T12:00:00.000Z' });
+    if (url.includes('/fault-context')) return Response.json({ propertyId: firstId, contextType: 'FAULT_TRACE', status: 'NEAREST_MAPPED_FAULT', nearestFeatureName: 'Serra fault', distanceMiles: 7.13, searchRadiusMiles: 20, sourceName: 'California Geological Survey 2010 Fault Activity Map — Quaternary Faults', sourceVersion: '2010 map', checkedAt: '2026-09-29T12:00:00.000Z' });
     if (url.endsWith('/properties/resolve') && init?.method === 'POST') return Response.json(makeRecord());
     return Response.json({ error: { code: 'PROPERTY_NOT_FOUND', message: 'not found', requestId: 'synthetic' } }, { status: 404 });
   });
@@ -108,6 +110,25 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: 'Assigned school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
     expect(schoolRow.getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('button', { name: /Grocery marker/ })).toBeNull();
+  });
+
+  it('switches official wildfire polygons and fault traces while retaining core candidates', async () => {
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Wildfire' }));
+    await screen.findByText('Subject point intersects a displayed High Fire Hazard Severity Zone.');
+    expect(screen.getByText('effective 2024-04-01')).toBeTruthy();
+    expect(screen.getAllByTestId('government-overlay')).toHaveLength(2);
+    expect(screen.getByText('Map context is informational and is not an engineering, insurance, or hazard assessment.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Faults' }));
+    await screen.findByText('Serra fault');
+    expect(screen.getByText('7.13 mi')).toBeTruthy();
+    expect(screen.getAllByTestId('government-overlay')).toHaveLength(1);
+    expect(screen.getByText('CGS mapped Quaternary fault traces, 2010')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Faults' }));
+    expect(screen.queryByTestId('government-overlay')).toBeNull();
   });
 
   it('keeps the Dashboard usable when map coordinates are unavailable', async () => {
