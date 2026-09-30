@@ -1,4 +1,4 @@
-# PPI architecture through Milestone 07
+# PPI architecture through Milestone 08
 
 The browser is a Vite/React app with Dashboard and History routes. Express owns HTTP validation, CORS, security headers, request IDs, and safe errors. Shared Zod contracts define property API inputs and responses. Docker PostgreSQL is the sole supported local database in the existing `ppi-local` Compose project. Prisma 6.12.0 defines and migrates the schema; runtime persistence uses the existing `pg` pool. No separate PostgreSQL service or Prisma Client runtime was introduced.
 
@@ -46,8 +46,8 @@ The fault adapter queries CGS's 2010 Quaternary Faults polyline layer within 20 
 
 `ppi-pricing-v1` owns sale eligibility, deduplication, simple distance/recency/size weights, weighted median price per sqft, observed weighted-quantile Market Reference Range, descriptive evidence quality, and distinct Offer/Listing range positions. Every candidate is marked included with factors and final weight or excluded with a reason code. Three eligible sales and positive subject living area are required; insufficiency returns no numeric price. Active asks remain separate competitive context. An Offer budget is a hard ceiling; if it is below the observed range, no offer is suggested. The engine does not broaden the market search. See [pricing engine v1](pricing-engine-v1.md) for exact formulas and thresholds.
 
-## UI and future boundaries
+## Saved analysis and UI
 
-Dashboard resolves and displays a saved/live profile with source, fetched time, expiry, and stale status. History reads PostgreSQL with address search and pagination, and supports view, notes/override edits, explicit refresh, and confirmed delete. Offer and Listing open a live deterministic preview dialog with explicit strategy settings, evidence trace, and clear insufficiency/budget states. Preview results exist only in browser state until cleared or a new subject is searched. Milestone-02 pricing fixtures remain isolated and are not imported into production routes.
+Dashboard resolves and displays a saved/live profile with source, fetched time, expiry, and stale status. History reads PostgreSQL with address search and pagination, and supports view, notes/override edits, explicit refresh, and confirmed delete. Offer and Listing create or reopen saved `AnalysisRun` versions. Each version stores the normalized pricing input and engine result, explanation and provenance metadata, and a deterministic hash. History opens exact frozen versions. A failed OpenAI explanation leaves its deterministic price visible. The older pricing preview API remains unsaved for deterministic-only callers. Milestone-02 pricing fixtures remain isolated and are not imported into production routes.
 
-Future services may add a verified attendance assignment adapter, optional school metadata reference, persisted `AnalysisRun` records with engine version, and AI explanations under separate provenance rules. The provider smoke CLI remains separate from app startup and property resolution.
+OpenAI receives a compact allowlisted projection and returns only structured narrative. The pricing engine remains the sole source of prices; the model output is checked against evidence IDs and engine amounts. Places and GIS context do not enter AI or analysis persistence. See [AI analysis](ai-analysis.md). A future service may add a verified attendance assignment adapter or optional school metadata reference. The provider smoke CLI remains separate from app startup and property resolution.

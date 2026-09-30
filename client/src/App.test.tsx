@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { calculatePricing, type PricingInput, type PropertyEnvelope } from '@ppi/shared';
+import { calculatePricing, type AnalysisRun, type PricingInput, type PropertyEnvelope } from '@ppi/shared';
 import { App } from './App.js';
 
 const firstId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -34,6 +34,16 @@ const pricingResponse = (mode: 'OFFER' | 'LISTING', strategyProfile: PricingInpu
       listingsSource: 'RENTCAST', searchRadiusMiles: 2, saleDateRangeDays: 365 } };
   return calculatePricing(input);
 };
+const analysisResponse = (mode: 'OFFER' | 'LISTING', strategyProfile: PricingInput['strategyProfile'], maxBudget: number | null = null): AnalysisRun => ({
+  id: crypto.randomUUID(), propertyId: firstId, mode, status: 'SUCCEEDED', strategyProfile, engineVersion: 'ppi-pricing-v1',
+  promptVersion: 'ppi-explanation-v1', model: 'gpt-5.6-luna', reasoningEffort: 'low',
+  userInputs: mode === 'OFFER' ? { mode, strategyProfile: strategyProfile as 'BALANCED', maxBudget } : { mode, strategyProfile: strategyProfile as 'BALANCED' },
+  inputSnapshot: {}, engineResult: pricingResponse(mode, strategyProfile, maxBudget),
+  aiResult: { summary: 'The engine used recorded sales.', reasons: [{ claim: 'The recorded sales support the reference.', evidenceIds: ['ENGINE'] }],
+    strategySteps: ['Review the range.'], assumptions: [], unknowns: [], warnings: [] },
+  inputHash: 'a'.repeat(64), createdAt: '2026-09-29T12:00:00.000Z', completedAt: '2026-09-29T12:00:01.000Z',
+  failureCode: null, tokenUsage: { inputTokens: 100, outputTokens: 50 }, latencyMs: 1000
+});
 const renderAt = (path = '/dashboard') => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -43,6 +53,7 @@ beforeEach(() => {
     if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
     if (url.includes('/properties?')) return Response.json({ items: [], total: 0, page: 1, pageSize: 5 });
     if (url.includes('/market-context')) return Response.json(marketResponse());
+    if (url.includes('/analyses') && init?.method === 'POST') { const body = JSON.parse(String(init?.body)); return Response.json(analysisResponse(body.mode, body.strategyProfile, body.maxBudget ?? null)); }
     if (url.includes('/pricing/preview')) { const body = JSON.parse(String(init?.body)); return Response.json(pricingResponse(body.mode, body.strategyProfile, body.maxBudget ?? null)); }
     if (url.includes('/assigned-schools')) return Response.json({ propertyId: firstId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null });
     if (url.includes('/nearby-places')) return Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 });
@@ -84,7 +95,7 @@ describe('Dashboard', () => {
     expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/properties/resolve'))).toHaveLength(1);
   });
 
-  it('opens deterministic Offer and Listing previews with user strategy controls', async () => {
+  it('opens saved Offer and Listing analyses with user strategy controls', async () => {
     renderAt();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
@@ -94,15 +105,36 @@ describe('Dashboard', () => {
     await within(dialog).findByText('ppi-pricing-v1', { exact: false });
     expect(dialog.textContent).toContain('$410,000');
     fireEvent.change(within(dialog).getByRole('combobox', { name: 'Strategy profile' }), { target: { value: 'COMPETITIVE' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Generate analysis' }));
     await waitFor(() => expect(dialog.textContent).toContain('$420,000'));
     fireEvent.change(within(dialog).getByRole('spinbutton', { name: 'Maximum budget' }), { target: { value: '415000' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Generate analysis' }));
     await waitFor(() => expect(dialog.textContent).toContain('$415,000'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
     fireEvent.click(screen.getByRole('button', { name: 'Listing Price' }));
     const listing = await screen.findByRole('dialog', { name: 'Listing Price Analysis' });
     fireEvent.change(within(listing).getByRole('combobox', { name: 'Strategy profile' }), { target: { value: 'TEST_MARKET' } });
+    fireEvent.click(within(listing).getByRole('button', { name: 'Generate analysis' }));
     await waitFor(() => expect(listing.textContent).toContain('$420,000'));
-    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/pricing/preview')).length).toBeGreaterThanOrEqual(4);
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).endsWith('/analyses')).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('keeps the engine price visible when the AI explanation fails', async () => {
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/analyses') && init?.method === 'POST') return Promise.resolve(Response.json({
+        ...analysisResponse('OFFER', 'BALANCED'), status: 'FAILED', aiResult: null, failureCode: 'MODEL_TIMEOUT'
+      }));
+      return baseFetch(input, init);
+    });
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Offer Price' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Offer Price Analysis' });
+    await within(dialog).findByText('Explanation unavailable. The deterministic price remains available.');
+    expect(dialog.textContent).toContain('$410,000');
+    expect(dialog.textContent).toContain('failed');
   });
 
   it('switches one map context at a time and turns the active layer off', async () => {
@@ -249,6 +281,28 @@ describe('Dashboard', () => {
 });
 
 describe('History', () => {
+  it('shows separate Offer and Listing versions and opens a frozen run without regeneration', async () => {
+    const offer = analysisResponse('OFFER', 'BALANCED');
+    const listing = analysisResponse('LISTING', 'BALANCED');
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = String(input);
+      if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
+      if (url.includes('/properties?')) return Response.json({ items: [makeRecord()], total: 1, page: 1, pageSize: 5 });
+      if (url.endsWith(`/properties/${firstId}/analyses`)) return Response.json({ items: [offer, listing], total: 2 });
+      return Response.json({ error: { code: 'REQUEST_FAILED', message: 'failed', requestId: 'synthetic' } }, { status: 500 });
+    });
+    renderAt('/history');
+    await screen.findByText('Analysis versions');
+    const detail = screen.getByRole('complementary', { name: 'Selected Record Details' });
+    expect(detail.textContent).toContain('Latest Offer Analysis');
+    expect(detail.textContent).toContain('Latest Listing Analysis');
+    fireEvent.click(within(detail).getAllByRole('button', { name: 'View Analysis' })[0]!);
+    const dialog = await screen.findByRole('dialog', { name: 'Offer Price Analysis' });
+    expect(dialog.textContent).toContain(offer.id);
+    expect(dialog.textContent).toContain('$410,000');
+    expect(fetchMock.mock.calls.some(call => call[1]?.method === 'POST' && String(call[0]).includes('/analyses'))).toBe(false);
+  });
+
   it('shows loading, then empty, and handles list errors', async () => {
     let complete: ((value: Response) => void) | undefined;
     fetchMock.mockImplementation((input: string) => String(input).endsWith('/health/live') ? Promise.resolve(Response.json({ status: 'live', requestId: 'synthetic' })) : new Promise<Response>(resolve => { complete = resolve; }));

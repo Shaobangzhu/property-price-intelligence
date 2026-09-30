@@ -1,1 +1,1 @@
-{ "extends": "./tsconfig.base.json", "compilerOptions": { "noEmit": true }, "include": ["scripts/smoke/**/*.ts"] }
+{ "extends": "./tsconfig.base.json", "compilerOptions": { "noEmit": true }, "include": ["scripts/smoke/**/*.ts", "scripts/eval/**/*.ts"] }

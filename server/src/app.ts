@@ -11,8 +11,10 @@ import type { AssignedSchoolsService } from './context/schools.js';
 import type { GroceryContextService } from './context/grocery.js';
 import type { HazardContextService } from './context/hazards.js';
 import type { PricingPreviewService } from './pricing/service.js';
+import type { AnalysisService } from './analysis/service.js';
+import { analysisRouter } from './analysis/routes.js';
 
-export function createApp(options: { checkDatabase: CheckDatabase; origins: string[]; propertyService?: PropertyService; marketService?: MarketEvidenceService; schoolsService?: AssignedSchoolsService; groceryService?: GroceryContextService; hazardService?: HazardContextService; pricingService?: PricingPreviewService; log?: (entry: { code: string; requestId: string }) => void }) {
+export function createApp(options: { checkDatabase: CheckDatabase; origins: string[]; propertyService?: PropertyService; marketService?: MarketEvidenceService; schoolsService?: AssignedSchoolsService; groceryService?: GroceryContextService; hazardService?: HazardContextService; pricingService?: PricingPreviewService; analysisService?: AnalysisService; log?: (entry: { code: string; requestId: string }) => void }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
@@ -21,7 +23,8 @@ export function createApp(options: { checkDatabase: CheckDatabase; origins: stri
   app.use(express.json({ limit: '32kb' }));
   app.get('/api/health/live', (_req, res) => res.json({ status: 'live', requestId: res.locals.requestId }));
   app.get('/api/health/ready', async (_req, res) => { const ready = await options.checkDatabase(); res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'unavailable', requestId: res.locals.requestId }); });
-  if (options.propertyService) app.use('/api/properties', propertyRouter(options.propertyService, options.marketService, options.schoolsService, options.groceryService, options.hazardService, options.pricingService));
+  if (options.propertyService) app.use('/api/properties', propertyRouter(options.propertyService, options.marketService, options.schoolsService, options.groceryService, options.hazardService, options.pricingService, options.analysisService));
+  if (options.analysisService) app.use('/api/analyses', analysisRouter(options.analysisService));
   app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found', requestId: res.locals.requestId } }));
   const errors: ErrorRequestHandler = (error, _req, res, _next) => {
     void _next;

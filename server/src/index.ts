@@ -11,6 +11,9 @@ import { AssignedSchoolsService, UnavailableAssignmentSource } from './context/s
 import { ArcGisPlacesProvider, GroceryContextService, parseGroceryPolicy } from './context/grocery.js';
 import { CalFireWildfireProvider, CgsFaultProvider, HazardContextService } from './context/hazards.js';
 import { PricingPreviewService } from './pricing/service.js';
+import { PgAnalysisRepository } from './analysis/repository.js';
+import { OpenAIExplanationModel } from './analysis/explanation.js';
+import { AnalysisService } from './analysis/service.js';
 
 async function main() {
   const config = parseServerConfig(loadServerEnv());
@@ -23,7 +26,9 @@ async function main() {
   const groceryService = new GroceryContextService(propertyRepository, new ArcGisPlacesProvider(config.ARCGIS_PLACES_API_KEY), parseGroceryPolicy(process.env));
   const hazardService = new HazardContextService(propertyRepository, new CalFireWildfireProvider(), new CgsFaultProvider());
   const pricingService = new PricingPreviewService(propertyService, marketService);
-  const app = createApp({ checkDatabase: db.check, origins: config.origins, propertyService, marketService, schoolsService, groceryService, hazardService, pricingService, log: entry => process.stderr.write(JSON.stringify(entry) + '\n') });
+  const analysisService = new AnalysisService(pricingService, new PgAnalysisRepository(db.pool),
+    new OpenAIExplanationModel(config.OPENAI_API_KEY, config.OPENAI_MODEL, config.OPENAI_REASONING_EFFORT), config.OPENAI_MODEL, config.OPENAI_REASONING_EFFORT);
+  const app = createApp({ checkDatabase: db.check, origins: config.origins, propertyService, marketService, schoolsService, groceryService, hazardService, pricingService, analysisService, log: entry => process.stderr.write(JSON.stringify(entry) + '\n') });
   const server = app.listen(config.PORT, config.HOST, () => process.stdout.write(`PPI API listening on ${config.HOST}:${config.PORT}\n`));
   let closing = false;
   const shutdown = () => { if (closing) return; closing = true; server.close(async () => { await db.close(); process.exitCode = 0; }); setTimeout(() => { process.exitCode = 1; server.closeAllConnections(); }, 5000).unref(); };

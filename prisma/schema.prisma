@@ -33,10 +33,38 @@ model Property {
   createdAt            DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime       @updatedAt @db.Timestamptz(6)
   snapshots            DataSnapshot[]
+  analyses             AnalysisRun[]
 
   @@unique([provider, providerPropertyId])
   @@index([updatedAt])
   @@index([formattedAddress])
+}
+
+model AnalysisRun {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  propertyId      String    @db.Uuid
+  property        Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  mode            String
+  status          String
+  strategyProfile String
+  engineVersion   String
+  promptVersion   String
+  model           String
+  reasoningEffort String
+  userInputs      Json
+  inputSnapshot   Json
+  engineResult    Json
+  aiResult        Json?
+  inputHash       String
+  requestKey      String?   @unique
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  completedAt     DateTime? @db.Timestamptz(6)
+  failureCode     String?
+  tokenUsage      Json?
+  latencyMs       Int?
+
+  @@index([propertyId, mode, createdAt(sort: Desc)])
+  @@index([propertyId, mode, inputHash, status])
 }
 
 model DataSnapshot {

@@ -22,7 +22,8 @@
     "db:check": "node --import tsx server/src/infrastructure/db-check-cli.ts",
     "db:migrate": "node --import tsx scripts/db-migrate.mjs",
     "prisma:validate": "node --env-file=server/.env node_modules/prisma/build/index.js validate",
-    "smoke:providers": "npm run build -w shared && node --import tsx scripts/smoke/cli.ts"
+    "smoke:providers": "npm run build -w shared && node --import tsx scripts/smoke/cli.ts",
+    "eval:analysis": "npm run build -w shared && node --import tsx scripts/eval/inspect.ts --live"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0", "@testing-library/jest-dom": "7.0.1", "@testing-library/react": "16.3.3",

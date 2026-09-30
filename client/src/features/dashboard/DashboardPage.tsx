@@ -12,12 +12,12 @@ import { money, range } from '../../format.js';
 
 function PriceInsights({ offer, listing, onOpen }: { offer: PricingPreviewResponse | null; listing: PricingPreviewResponse | null; onOpen: (mode: AnalysisMode) => void }) {
   const reference = offer?.referenceRange ?? listing?.referenceRange ?? null;
-  return <section className="card insights-card" aria-labelledby="insights-title"><div className="card-heading"><div><span className="eyebrow">Decision support</span><h2 id="insights-title">Price Insights</h2></div><span className="section-tag">Preview</span></div>
-    <div className="insight-reference"><span>Market Reference Range</span><strong>{range(reference)}</strong><small>{reference ? 'Recorded-sale evidence · current preview' : 'Open a pricing preview to assess evidence'}</small></div>
-    <div className="insight-metric"><span>Current Offer Preview</span><strong>{offer ? money(offer.offerResult?.suggestedPrice ?? null) : 'Not analyzed'}</strong><small>{offer ? labelEvidence(offer) : 'No offer preview yet'}</small></div>
-    <div className="insight-metric"><span>Current Listing Preview</span><strong>{listing ? money(listing.listingResult?.suggestedPrice ?? null) : 'Not analyzed'}</strong><small>{listing ? labelEvidence(listing) : 'No listing preview yet'}</small></div>
+  return <section className="card insights-card" aria-labelledby="insights-title"><div className="card-heading"><div><span className="eyebrow">Decision support</span><h2 id="insights-title">Price Insights</h2></div><span className="section-tag">Saved analysis</span></div>
+    <div className="insight-reference"><span>Market Reference Range</span><strong>{range(reference)}</strong><small>{reference ? 'Recorded-sale evidence · saved analysis' : 'Open an analysis to assess evidence'}</small></div>
+    <div className="insight-metric"><span>Current Offer Analysis</span><strong>{offer ? money(offer.offerResult?.suggestedPrice ?? null) : 'Not analyzed'}</strong><small>{offer ? labelEvidence(offer) : 'No offer analysis yet'}</small></div>
+    <div className="insight-metric"><span>Current Listing Analysis</span><strong>{listing ? money(listing.listingResult?.suggestedPrice ?? null) : 'Not analyzed'}</strong><small>{listing ? labelEvidence(listing) : 'No listing analysis yet'}</small></div>
     <div className="insight-actions"><button className="button button-primary" type="button" onClick={() => onOpen('OFFER')}>Offer Price</button><button className="button button-outline" type="button" onClick={() => onOpen('LISTING')}>Listing Price</button></div>
-    <p className="insight-footnote">Deterministic preview only. No AI price calculation or saved analysis.</p>
+    <p className="insight-footnote">Price calculated by PPI pricing engine; explanation AI-assisted.</p>
   </section>;
 }
 const labelEvidence = (value: PricingPreviewResponse) => value.status === 'READY' ? `${value.evidenceQuality.toLowerCase()} evidence · ${value.engineVersion}` : 'Insufficient recorded-sale evidence';
@@ -100,7 +100,7 @@ export function DashboardPage() {
   const currentContext = contextState && contextState.propertyId === record?.property.id && contextState.context === activeContext ? contextState : null;
   const markers = getContextMarkers(activeContext, currentContext?.schools ?? null, currentContext?.grocery ?? null);
 
-  return <div className="page dashboard-page"><div className="page-intro"><div><span className="page-kicker">WORKSPACE / DASHBOARD</span><h1>Dashboard</h1><p>Search a subject property and review nearby market evidence.</p></div><span className="demo-banner">Live property and market data · Deterministic pricing preview</span></div>
+  return <div className="page dashboard-page"><div className="page-intro"><div><span className="page-kicker">WORKSPACE / DASHBOARD</span><h1>Dashboard</h1><p>Search a subject property and review nearby market evidence.</p></div><span className="demo-banner">Live property and market data · Saved pricing analysis</span></div>
     <section className="card search-card" aria-labelledby="search-title"><div className="search-card-header"><div><span className="eyebrow">Property lookup</span><h2 id="search-title">Find a property</h2></div><span className="search-hint">Enter the full address, including unit when applicable</span></div>
       <form className="search-form" onSubmit={search}><label className="sr-only" htmlFor="property-address">Search a property address</label><div className="search-input-wrap"><span aria-hidden="true" className="search-icon">⌕</span><input id="property-address" value={query} onChange={event => setQuery(event.target.value)} placeholder="Street, unit, city, state, ZIP" autoComplete="street-address" /></div><button className="button button-primary" type="submit">Search</button>{(query || record) && <button className="button button-quiet" type="button" onClick={clear}>Clear</button>}</form>
       <p className="lookup-note">Fresh saved profiles come from the PPI cache. A missing or expired profile makes one server-side RentCast request.</p>

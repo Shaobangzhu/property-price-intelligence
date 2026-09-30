@@ -178,5 +178,25 @@ export const PricingPreviewResponse = z.object({
       maxPricePerSqftMedianRatio: z.number().positive() }) })
 });
 export type PricingPreviewResponse = z.infer<typeof PricingPreviewResponse>;
+export const PricingExplanation = z.object({
+  summary: z.string().min(1).max(800),
+  reasons: z.array(z.object({ claim: z.string().min(1).max(400), evidenceIds: z.array(z.string().min(1).max(100)).min(1).max(8) }).strict()).min(1).max(8),
+  strategySteps: z.array(z.string().min(1).max(400)).max(6),
+  assumptions: z.array(z.string().min(1).max(400)).max(8),
+  unknowns: z.array(z.string().min(1).max(400)).max(8),
+  warnings: z.array(z.string().min(1).max(400)).max(8)
+}).strict();
+export type PricingExplanation = z.infer<typeof PricingExplanation>;
+export const AnalysisRun = z.object({
+  id: PropertyId, propertyId: PropertyId, mode: AnalysisMode, status: z.enum(['RUNNING', 'SUCCEEDED', 'FAILED']),
+  strategyProfile: z.string(), engineVersion: z.string(), promptVersion: z.string(), model: z.string(), reasoningEffort: z.string(),
+  userInputs: PricingPreviewRequest, inputSnapshot: z.unknown(), engineResult: PricingPreviewResponse, aiResult: PricingExplanation.nullable(),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime(), completedAt: z.iso.datetime().nullable(),
+  failureCode: z.string().nullable(), tokenUsage: z.object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative() }).nullable(),
+  latencyMs: z.number().int().nonnegative().nullable()
+});
+export type AnalysisRun = z.infer<typeof AnalysisRun>;
+export const AnalysisListResponse = z.object({ items: z.array(AnalysisRun), total: z.number().int().nonnegative() });
+export type AnalysisListResponse = z.infer<typeof AnalysisListResponse>;
 export { calculatePricing, ENGINE_VERSION, PRICING_CONFIG_V1 } from './pricing.js';
 export type { PricingInput, PricingEngineResult, PricingConfig, IncludedComparable, ExcludedComparable } from './pricing.js';

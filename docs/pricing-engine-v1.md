@@ -1,6 +1,6 @@
 # Deterministic pricing engine v1
 
-Version: `ppi-pricing-v1`. This is a TypeScript rule set in `shared/src/pricing.ts`. It uses no React, Express, Prisma, ArcGIS, OpenAI, or LLM. The same validated input and `asOf` timestamp produce the same result. Changing a threshold or formula requires a new engine version. The current endpoint returns an unsaved preview; a future `AnalysisRun` record must store the engine version beside its inputs and result.
+Version: `ppi-pricing-v1`. This is a TypeScript rule set in `shared/src/pricing.ts`. It uses no React, Express, Prisma, ArcGIS, OpenAI, or LLM. The same validated input and `asOf` timestamp produce the same result. Changing a threshold or formula requires a new engine version. The preview endpoint remains unsaved; Milestone 08 `AnalysisRun` stores the engine version beside frozen inputs and results.
 
 ## Scope and inputs
 

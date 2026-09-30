@@ -10,6 +10,8 @@ import { ProviderError, type NormalizedProviderProperty } from '../server/src/pr
 import { PgMarketRepository } from '../server/src/market/repository.js';
 import { MarketEvidenceService } from '../server/src/market/service.js';
 import { normalizeMarketResponse } from '../server/src/market/provider.js';
+import { calculatePricing, type PricingInput } from '@ppi/shared';
+import { PgAnalysisRepository } from '../server/src/analysis/repository.js';
 
 const enabled = process.env.PPI_INTEGRATION_TESTS === 'true';
 const address = '123 Main St, Apt 2, Austin, TX 78701';
@@ -35,7 +37,7 @@ describe.skipIf(!enabled)('PostgreSQL property workflow in an isolated test sche
     publicCount = Number((await admin.query('SELECT COUNT(*)::int AS count FROM public."Property"')).rows[0]?.count);
     await admin.query(`CREATE SCHEMA "${schema}"`);
     pool = new pg.Pool({ connectionString: config.DATABASE_URL, options: `-c search_path=${schema}`, max: 2 });
-    for (const migration of ['20260929000000_property_profile', '20260929000100_refresh_failure_marker']) {
+    for (const migration of ['20260929000000_property_profile', '20260929000100_refresh_failure_marker', '20260929000200_analysis_run']) {
       await pool.query(readFileSync(resolve(`prisma/migrations/${migration}/migration.sql`), 'utf8'));
     }
     repository = new PgPropertyRepository(pool);
@@ -91,5 +93,36 @@ describe.skipIf(!enabled)('PostgreSQL property workflow in an isolated test sche
     expect((await market.get(created.property.id)).recordedSales.cacheStatus).toBe('HIT');
     await propertyService.delete(created.property.id);
     expect((await pool.query('SELECT COUNT(*)::int AS count FROM "DataSnapshot"')).rows[0]?.count).toBe(0);
+  });
+
+  it('saves versioned analyses and frozen engine results without modifying refreshed property data', async () => {
+    const propertyService = new PropertyService(repository, { name: 'RENTCAST', search: async () => [profile] });
+    const created = await propertyService.resolve(address);
+    const now = '2026-09-29T00:00:00.000Z';
+    const sales = [200000, 220000, 240000].map((price, index) => ({ id: `sale:${index}`, providerId: `provider:${index}`, address: `${index} Main St`,
+      evidenceType: 'RECORDED_SALE' as const, propertyType: 'Condo', price,
+      eventDate: new Date(Date.parse(now) - (index + 1) * 30 * 86_400_000).toISOString(), distanceMiles: index / 2,
+      livingAreaSqft: 1200, bedrooms: 2, bathrooms: 2 }));
+    const input: PricingInput = { subject: { id: created.property.id, propertyType: 'Condo', livingAreaSqft: 1200, bedrooms: 2, bathrooms: 2,
+      currentListPrice: null, overrideFields: [] }, recordedSales: sales, activeListings: [], mode: 'OFFER', strategyProfile: 'BALANCED', maxBudget: null,
+      asOf: now, metadata: { propertyFreshness: 'FRESH', salesFreshness: 'FRESH', listingsFreshness: 'FRESH', salesSource: 'RENTCAST', listingsSource: 'RENTCAST',
+        searchRadiusMiles: 2, saleDateRangeDays: 365 } };
+    const analyses = new PgAnalysisRepository(pool);
+    const runInput = { propertyId: created.property.id, mode: 'OFFER' as const, strategyProfile: 'BALANCED', engineVersion: 'ppi-pricing-v1',
+      promptVersion: 'ppi-explanation-v1', model: 'gpt-5.6-luna', reasoningEffort: 'low', userInputs: { mode: 'OFFER' as const, strategyProfile: 'BALANCED' as const },
+      inputSnapshot: input, engineResult: calculatePricing(input), inputHash: 'a'.repeat(64), requestKey: '11111111-1111-4111-8111-111111111111' };
+    const claimed = await analyses.claim(runInput, false);
+    expect(claimed.claimed).toBe(true);
+    await expect(analyses.claim({ ...runInput, inputHash: 'b'.repeat(64) }, false)).rejects.toMatchObject({ code: 'REQUEST_KEY_CONFLICT' });
+    expect((await analyses.claim({ ...runInput, requestKey: '22222222-2222-4222-8222-222222222222' }, false)).run.id).toBe(claimed.run.id);
+    await analyses.finish(claimed.run.id, { status: 'FAILED', aiResult: null, failureCode: 'MODEL_TIMEOUT', tokenUsage: null, latencyMs: 12000 });
+    const renewed = await analyses.claim({ ...runInput, requestKey: '33333333-3333-4333-8333-333333333333' }, false);
+    expect(renewed.run.id).not.toBe(claimed.run.id);
+    await propertyService.patch(created.property.id, { overrides: { livingAreaSqft: 1300 } });
+    expect((await analyses.get(claimed.run.id))?.engineResult.referencePrice).toBe(claimed.run.engineResult.referencePrice);
+    expect(((await analyses.get(claimed.run.id))?.inputSnapshot as PricingInput).subject.livingAreaSqft).toBe(1200);
+    expect((await analyses.list(created.property.id)).total).toBe(2);
+    await propertyService.delete(created.property.id);
+    expect((await analyses.list(created.property.id)).total).toBe(0);
   });
 });

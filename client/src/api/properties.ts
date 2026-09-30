@@ -1,4 +1,4 @@
-import { ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
+import { AnalysisListResponse, AnalysisRun, ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
 
 const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 
@@ -27,6 +27,20 @@ export function getFaultContext(id: string, signal?: AbortSignal) { return reque
 export function previewPricing(id: string, payload: PricingPreviewRequest, signal?: AbortSignal) {
   return request(`/properties/${encodeURIComponent(id)}/pricing/preview`, PricingPreviewResponse,
     { method: 'POST', body: JSON.stringify(payload), signal, cache: 'no-store' });
+}
+export function createAnalysis(id: string, payload: PricingPreviewRequest, key: string) {
+  return request(`/properties/${encodeURIComponent(id)}/analyses`, AnalysisRun,
+    { method: 'POST', body: JSON.stringify(payload), headers: { 'Idempotency-Key': key }, cache: 'no-store' });
+}
+export function listAnalyses(id: string, signal?: AbortSignal) {
+  return request(`/properties/${encodeURIComponent(id)}/analyses`, AnalysisListResponse, { signal, cache: 'no-store' });
+}
+export function getAnalysis(id: string, signal?: AbortSignal) {
+  return request(`/analyses/${encodeURIComponent(id)}`, AnalysisRun, { signal, cache: 'no-store' });
+}
+export function regenerateAnalysis(id: string, key: string) {
+  return request(`/analyses/${encodeURIComponent(id)}/regenerate-explanation`, AnalysisRun,
+    { method: 'POST', body: '{}', headers: { 'Idempotency-Key': key }, cache: 'no-store' });
 }
 export function listProperties(options: { page: number; pageSize: number; search: string }, signal?: AbortSignal) {
   const query = new URLSearchParams({ page: String(options.page), pageSize: String(options.pageSize), search: options.search });

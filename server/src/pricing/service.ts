@@ -8,7 +8,7 @@ export class PricingPreviewService {
   constructor(private readonly properties: PropertyService, private readonly market: MarketEvidenceService,
     private readonly now: () => Date = () => new Date()) {}
 
-  async preview(propertyId: string, request: PricingPreviewRequest) {
+  async prepareInput(propertyId: string, request: PricingPreviewRequest): Promise<PricingInput> {
     const [propertyEnvelope, marketContext] = await Promise.all([this.properties.get(propertyId), this.market.get(propertyId)]);
     const property = PropertyEnvelope.parse(propertyEnvelope);
     const market = MarketContextResponse.parse(marketContext);
@@ -34,8 +34,13 @@ export class PricingPreviewService {
       asOf: this.now().toISOString(),
       metadata: { propertyFreshness: property.cache.freshness, salesFreshness: market.recordedSales.freshness,
         listingsFreshness: market.activeListings.freshness, salesSource: market.recordedSales.source, listingsSource: market.activeListings.source,
-        searchRadiusMiles: market.recordedSales.query?.radiusMiles ?? null, saleDateRangeDays: market.recordedSales.query?.saleDateRangeDays ?? null }
+        searchRadiusMiles: market.recordedSales.query?.radiusMiles ?? null, saleDateRangeDays: market.recordedSales.query?.saleDateRangeDays ?? null,
+        propertyFetchedAt: property.cache.fetchedAt, salesFetchedAt: market.recordedSales.fetchedAt, listingsFetchedAt: market.activeListings.fetchedAt }
     };
-    return PricingPreviewResponse.parse(calculatePricing(input));
+    return input;
+  }
+
+  async preview(propertyId: string, request: PricingPreviewRequest) {
+    return PricingPreviewResponse.parse(calculatePricing(await this.prepareInput(propertyId, request)));
   }
 }

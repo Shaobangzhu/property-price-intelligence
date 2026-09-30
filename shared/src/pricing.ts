@@ -20,7 +20,8 @@ export type PricingInput = {
   mode: PricingMode; strategyProfile: OfferStrategy | ListingStrategy; maxBudget: number | null;
   asOf: string;
   metadata: { propertyFreshness: Freshness; salesFreshness: Freshness; listingsFreshness: Freshness;
-    salesSource: string | null; listingsSource: string | null; searchRadiusMiles: number | null; saleDateRangeDays: number | null };
+    salesSource: string | null; listingsSource: string | null; searchRadiusMiles: number | null; saleDateRangeDays: number | null;
+    propertyFetchedAt?: string | null; salesFetchedAt?: string | null; listingsFetchedAt?: string | null };
 };
 export type PricingConfig = {
   engineVersion: typeof ENGINE_VERSION; maxSaleAgeDays: number; maxDistanceMiles: number; minSqftRatio: number;

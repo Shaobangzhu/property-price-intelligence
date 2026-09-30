@@ -22,13 +22,13 @@ const schema = z.object({
   DATABASE_URL: optional,
   ALLOWED_ORIGINS: z.string().default('http://localhost:5173'),
   RENTCAST_API_KEY: optional, ARCGIS_PLACES_API_KEY: optional, OPENAI_API_KEY: optional,
-  OPENAI_MODEL: z.string().trim().min(1).default('gpt-6-luna'),
+  OPENAI_MODEL: z.string().trim().min(1).default('gpt-5.6-luna'),
   OPENAI_REASONING_EFFORT: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']).default('low'),
   ALLOW_LIVE_API_TESTS: z.enum(['true', 'false']).default('false').transform(value => value === 'true'),
   SMOKE_TEST_ADDRESS: optional, SMOKE_TEST_LATITUDE: coordinates, SMOKE_TEST_LONGITUDE: coordinates, SMOKE_GROCERY_CATEGORY_ID: optional
 });
 export type AppConfig = z.infer<typeof schema> & { origins: string[]; smokeCoordinates: { latitude: number; longitude: number } | null };
-export type ServerConfig = Pick<AppConfig, 'NODE_ENV' | 'HOST' | 'PORT' | 'DATABASE_URL' | 'ALLOWED_ORIGINS' | 'RENTCAST_API_KEY' | 'ARCGIS_PLACES_API_KEY' | 'origins'>;
+export type ServerConfig = Pick<AppConfig, 'NODE_ENV' | 'HOST' | 'PORT' | 'DATABASE_URL' | 'ALLOWED_ORIGINS' | 'RENTCAST_API_KEY' | 'ARCGIS_PLACES_API_KEY' | 'OPENAI_API_KEY' | 'OPENAI_MODEL' | 'OPENAI_REASONING_EFFORT' | 'origins'>;
 
 function validateBase(data: Pick<AppConfig, 'ALLOWED_ORIGINS' | 'DATABASE_URL'>): string[] {
   const origins = data.ALLOWED_ORIGINS.split(',').map(v => v.trim());
@@ -38,7 +38,8 @@ function validateBase(data: Pick<AppConfig, 'ALLOWED_ORIGINS' | 'DATABASE_URL'>)
 }
 
 export function parseServerConfig(values: NodeJS.ProcessEnv): ServerConfig {
-  const result = schema.pick({ NODE_ENV: true, HOST: true, PORT: true, DATABASE_URL: true, ALLOWED_ORIGINS: true, RENTCAST_API_KEY: true, ARCGIS_PLACES_API_KEY: true }).safeParse(values);
+  const result = schema.pick({ NODE_ENV: true, HOST: true, PORT: true, DATABASE_URL: true, ALLOWED_ORIGINS: true, RENTCAST_API_KEY: true, ARCGIS_PLACES_API_KEY: true,
+    OPENAI_API_KEY: true, OPENAI_MODEL: true, OPENAI_REASONING_EFFORT: true }).safeParse(values);
   if (!result.success) throw new Error(`Invalid configuration: ${result.error.issues.map(i => i.path.join('.')).join(', ')}`);
   return { ...result.data, origins: validateBase(result.data) };
 }

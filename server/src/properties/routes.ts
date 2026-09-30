@@ -6,6 +6,7 @@ import type { AssignedSchoolsService } from '../context/schools.js';
 import type { GroceryContextService } from '../context/grocery.js';
 import type { HazardContextService } from '../context/hazards.js';
 import type { PricingPreviewService } from '../pricing/service.js';
+import type { AnalysisService } from '../analysis/service.js';
 
 function idFrom(request: Request): string {
   const parsed = PropertyId.safeParse(request.params.id);
@@ -13,7 +14,7 @@ function idFrom(request: Request): string {
   return parsed.data;
 }
 
-export function propertyRouter(service: PropertyService, market?: MarketEvidenceService, schools?: AssignedSchoolsService, grocery?: GroceryContextService, hazards?: HazardContextService, pricing?: PricingPreviewService) {
+export function propertyRouter(service: PropertyService, market?: MarketEvidenceService, schools?: AssignedSchoolsService, grocery?: GroceryContextService, hazards?: HazardContextService, pricing?: PricingPreviewService, analyses?: AnalysisService) {
   const router = Router();
   router.post('/resolve', async (req, res) => {
     const parsed = ResolvePropertyInput.safeParse(req.body);
@@ -44,6 +45,22 @@ export function propertyRouter(service: PropertyService, market?: MarketEvidence
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.json(await pricing.preview(idFrom(req), parsed.data));
   });
+  if (analyses) {
+    router.post('/:id/analyses', async (req, res) => {
+      const parsed = PricingPreviewRequest.safeParse(req.body);
+      if (!parsed.success) throw new PropertyError('INVALID_PRICING_REQUEST', 400);
+      const key = req.header('Idempotency-Key');
+      if (key && !PropertyId.safeParse(key).success) throw new PropertyError('INVALID_REQUEST_KEY', 400);
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+      res.json(await analyses.create(idFrom(req), parsed.data, key));
+    });
+    router.get('/:id/analyses', async (req, res) => {
+      const id = idFrom(req);
+      await service.get(id);
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+      res.json(await analyses.list(id));
+    });
+  }
   router.patch('/:id', async (req, res) => {
     const parsed = PropertyPatchInput.safeParse(req.body);
     if (!parsed.success) throw new PropertyError('INVALID_INPUT', 400);

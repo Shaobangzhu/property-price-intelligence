@@ -8,7 +8,8 @@ describe('configuration', () => {
     expect(() => parseConfig({ ALLOW_LIVE_API_TESTS: 'yes' })).toThrow('ALLOW_LIVE_API_TESTS');
   });
   it('does not validate unused provider settings at server startup', () => {
-    expect(parseServerConfig({ OPENAI_REASONING_EFFORT: 'invalid', SMOKE_TEST_LATITUDE: 'bad', SMOKE_GROCERY_CATEGORY_ID: 'bad' }).PORT).toBe(3001);
+    expect(parseServerConfig({ SMOKE_TEST_LATITUDE: 'bad', SMOKE_GROCERY_CATEGORY_ID: 'bad' }).PORT).toBe(3001);
+    expect(() => parseServerConfig({ OPENAI_REASONING_EFFORT: 'invalid' })).toThrow('OPENAI_REASONING_EFFORT');
     expect(() => parseConfig({ OPENAI_REASONING_EFFORT: 'invalid' })).toThrow('OPENAI_REASONING_EFFORT');
   });
   it('redacts invalid values', () => {
