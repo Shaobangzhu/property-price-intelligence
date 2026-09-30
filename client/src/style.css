@@ -663,6 +663,15 @@ p {
 .comp-dot {
   background:#28a889
 }
+.listing-dot {
+  background:#d98b35
+}
+.school-dot {
+  background:#7552a3
+}
+.grocery-dot {
+  background:#bf5268
+}
 .context-dot {
   background:#efad56
 }
@@ -695,6 +704,36 @@ p {
 }
 .context-list li:last-child {
   border:0
+}
+.context-source {
+  margin:0 0 10px;
+  color:#71869d;
+  font-size:10px
+}
+.context-group h3 {
+  margin:14px 0 2px;
+  color:#415b78;
+  font-size:12px
+}
+.context-result {
+  display:block;
+  width:100%;
+  padding:6px 8px;
+  border:1px solid transparent;
+  border-radius:6px;
+  background:transparent;
+  text-align:left;
+  cursor:pointer
+}
+.context-result:hover,.context-result[aria-pressed="true"] {
+  border-color:#c8d9ec;
+  background:#f0f6fc
+}
+.context-result span {
+  display:block;
+  margin:3px 0;
+  color:#6f8298;
+  font-size:10px
 }
 .context-icon {
   flex:none;

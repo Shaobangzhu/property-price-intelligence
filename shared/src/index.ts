@@ -95,3 +95,30 @@ export const MarketEvidenceGroup = z.object({
 export type MarketEvidenceGroup = z.infer<typeof MarketEvidenceGroup>;
 export const MarketContextResponse = z.object({ propertyId: PropertyId, recordedSales: MarketEvidenceGroup, activeListings: MarketEvidenceGroup });
 export type MarketContextResponse = z.infer<typeof MarketContextResponse>;
+
+export const AssignmentLevel = z.enum(['ELEMENTARY', 'MIDDLE', 'HIGH', 'OTHER']);
+export const SchoolMatchStatus = z.enum(['EXACT_ID', 'NAME_DISTRICT', 'NAME_CITY', 'UNMATCHED']);
+export const AssignedSchool = z.object({
+  id: z.string().min(1), assignmentLevel: AssignmentLevel, sourceSchoolId: z.string().nullable(),
+  name: z.string().min(1), district: z.string().nullable(), city: z.string().nullable(),
+  latitude: NullableNumber, longitude: NullableNumber, grades: z.string().nullable(), schoolType: z.string().nullable(),
+  distanceMiles: NullableNumber, assignmentSource: z.string().min(1), metadataSource: z.string().nullable(), matchStatus: SchoolMatchStatus
+});
+export type AssignedSchool = z.infer<typeof AssignedSchool>;
+export const AssignedSchoolsResponse = z.object({
+  propertyId: PropertyId, status: z.enum(['ASSIGNMENT_UNAVAILABLE', 'AVAILABLE', 'PARTIAL', 'UNMATCHED', 'PROVIDER_ERROR']),
+  schools: z.array(AssignedSchool), assignmentSource: z.string().nullable()
+});
+export type AssignedSchoolsResponse = z.infer<typeof AssignedSchoolsResponse>;
+
+export const GroceryPlace = z.object({
+  id: z.string().min(1), name: z.string().min(1), category: z.string().nullable(),
+  latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180),
+  distanceMiles: z.number().nonnegative().nullable(), source: z.literal('ARCGIS_PLACES')
+});
+export type GroceryPlace = z.infer<typeof GroceryPlace>;
+export const GroceryResponse = z.object({
+  propertyId: PropertyId, status: z.enum(['AVAILABLE', 'NO_RESULTS', 'NO_COORDINATES', 'CREDENTIAL_UNAVAILABLE', 'RATE_LIMIT', 'PROVIDER_ERROR']),
+  places: z.array(GroceryPlace), source: z.literal('ARCGIS_PLACES'), radiusMeters: z.number().int().positive()
+});
+export type GroceryResponse = z.infer<typeof GroceryResponse>;

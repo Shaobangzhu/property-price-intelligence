@@ -1,4 +1,4 @@
-import { ApiErrorResponse, MarketContextResponse, PropertyEnvelope, PropertyListResponse, type PropertyPatchInput } from '@ppi/shared';
+import { ApiErrorResponse, AssignedSchoolsResponse, GroceryResponse, MarketContextResponse, PropertyEnvelope, PropertyListResponse, type PropertyPatchInput } from '@ppi/shared';
 
 const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 
@@ -20,6 +20,8 @@ export function resolveProperty(address: string, signal?: AbortSignal) {
 }
 export function getProperty(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}`, PropertyEnvelope, { signal }); }
 export function getMarketContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/market-context`, MarketContextResponse, { signal }); }
+export function getAssignedSchools(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/assigned-schools`, AssignedSchoolsResponse, { signal }); }
+export function getGroceryPlaces(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/nearby-places?category=grocery`, GroceryResponse, { signal, cache: 'no-store' }); }
 export function listProperties(options: { page: number; pageSize: number; search: string }, signal?: AbortSignal) {
   const query = new URLSearchParams({ page: String(options.page), pageSize: String(options.pageSize), search: options.search });
   return request(`/properties?${query}`, PropertyListResponse, { signal });

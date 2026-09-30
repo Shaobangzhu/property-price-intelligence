@@ -28,7 +28,7 @@ const schema = z.object({
   SMOKE_TEST_ADDRESS: optional, SMOKE_TEST_LATITUDE: coordinates, SMOKE_TEST_LONGITUDE: coordinates, SMOKE_GROCERY_CATEGORY_ID: optional
 });
 export type AppConfig = z.infer<typeof schema> & { origins: string[]; smokeCoordinates: { latitude: number; longitude: number } | null };
-export type ServerConfig = Pick<AppConfig, 'NODE_ENV' | 'HOST' | 'PORT' | 'DATABASE_URL' | 'ALLOWED_ORIGINS' | 'RENTCAST_API_KEY' | 'origins'>;
+export type ServerConfig = Pick<AppConfig, 'NODE_ENV' | 'HOST' | 'PORT' | 'DATABASE_URL' | 'ALLOWED_ORIGINS' | 'RENTCAST_API_KEY' | 'ARCGIS_PLACES_API_KEY' | 'origins'>;
 
 function validateBase(data: Pick<AppConfig, 'ALLOWED_ORIGINS' | 'DATABASE_URL'>): string[] {
   const origins = data.ALLOWED_ORIGINS.split(',').map(v => v.trim());
@@ -38,7 +38,7 @@ function validateBase(data: Pick<AppConfig, 'ALLOWED_ORIGINS' | 'DATABASE_URL'>)
 }
 
 export function parseServerConfig(values: NodeJS.ProcessEnv): ServerConfig {
-  const result = schema.pick({ NODE_ENV: true, HOST: true, PORT: true, DATABASE_URL: true, ALLOWED_ORIGINS: true, RENTCAST_API_KEY: true }).safeParse(values);
+  const result = schema.pick({ NODE_ENV: true, HOST: true, PORT: true, DATABASE_URL: true, ALLOWED_ORIGINS: true, RENTCAST_API_KEY: true, ARCGIS_PLACES_API_KEY: true }).safeParse(values);
   if (!result.success) throw new Error(`Invalid configuration: ${result.error.issues.map(i => i.path.join('.')).join(', ')}`);
   return { ...result.data, origins: validateBase(result.data) };
 }

@@ -32,6 +32,8 @@ beforeEach(() => {
     if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
     if (url.includes('/properties?')) return Response.json({ items: [], total: 0, page: 1, pageSize: 5 });
     if (url.includes('/market-context')) return Response.json(marketResponse());
+    if (url.includes('/assigned-schools')) return Response.json({ propertyId: firstId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null });
+    if (url.includes('/nearby-places')) return Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 });
     if (url.endsWith('/properties/resolve') && init?.method === 'POST') return Response.json(makeRecord());
     return Response.json({ error: { code: 'PROPERTY_NOT_FOUND', message: 'not found', requestId: 'synthetic' } }, { status: 404 });
   });
@@ -77,11 +79,35 @@ describe('Dashboard', () => {
     fireEvent.click(schools);
     expect(schools.getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('heading', { name: 'Assigned Schools' })).toBeTruthy();
+    await screen.findByText('Assigned school information is unavailable for this property.');
+    expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
     fireEvent.click(grocery);
     expect(schools.getAttribute('aria-pressed')).toBe('false');
     expect(grocery.getAttribute('aria-pressed')).toBe('true');
+    const groceryMarker = await screen.findByRole('button', { name: 'Grocery marker: Market One' });
+    fireEvent.click(groceryMarker);
+    expect(groceryMarker.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Select grocery Market One' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(grocery);
     expect(grocery.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Grocery marker: Market One' })).toBeNull();
+    expect(screen.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeTruthy();
+  });
+
+  it('synchronizes verified assigned-school list and marker selection without using nearby schools', async () => {
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => String(input).includes('/assigned-schools')
+      ? Promise.resolve(Response.json({ propertyId: firstId, status: 'AVAILABLE', assignmentSource: 'VERIFIED_PROVIDER', schools: [{ id: 'school:one', assignmentLevel: 'ELEMENTARY', sourceSchoolId: 'one', name: 'Oak Elementary', district: 'Austin ISD', city: 'Austin', latitude: 30.11, longitude: -97.11, grades: 'K–5', schoolType: 'Public', distanceMiles: 0.9, assignmentSource: 'VERIFIED_PROVIDER', metadataSource: 'REFERENCE', matchStatus: 'EXACT_ID' }] }))
+      : baseFetch(input, init));
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Schools' }));
+    const schoolRow = await screen.findByRole('button', { name: 'Select assigned school Oak Elementary' });
+    fireEvent.click(schoolRow);
+    expect(screen.getByRole('button', { name: 'Assigned school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
+    expect(schoolRow.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('button', { name: /Grocery marker/ })).toBeNull();
   });
 
   it('keeps the Dashboard usable when map coordinates are unavailable', async () => {
