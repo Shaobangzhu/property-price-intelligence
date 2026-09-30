@@ -7,6 +7,9 @@ import { loadServerEnv, parseServerConfig } from '../server/src/config/env.js';
 import { PgPropertyRepository } from '../server/src/properties/pg-repository.js';
 import { PropertyService } from '../server/src/properties/service.js';
 import { ProviderError, type NormalizedProviderProperty } from '../server/src/properties/provider.js';
+import { PgMarketRepository } from '../server/src/market/repository.js';
+import { MarketEvidenceService } from '../server/src/market/service.js';
+import { normalizeMarketResponse } from '../server/src/market/provider.js';
 
 const enabled = process.env.PPI_INTEGRATION_TESTS === 'true';
 const address = '123 Main St, Apt 2, Austin, TX 78701';
@@ -69,6 +72,24 @@ describe.skipIf(!enabled)('PostgreSQL property workflow in an isolated test sche
     expect((await service.refresh(created.property.id)).cache.freshness).toBe('FRESH');
     await service.delete(created.property.id);
     expect((await service.list({ page: 1, pageSize: 5, search: '' })).total).toBe(0);
+    expect((await pool.query('SELECT COUNT(*)::int AS count FROM "DataSnapshot"')).rows[0]?.count).toBe(0);
+  });
+
+  it('stores separate market snapshots with query metadata and cascades them with the subject', async () => {
+    const propertyService = new PropertyService(repository, { name: 'RENTCAST', search: async () => [profile] });
+    const created = await propertyService.resolve(address);
+    const market = new MarketEvidenceService(repository, new PgMarketRepository(pool), { name: 'RENTCAST', search: async (kind, query, subject) =>
+      normalizeMarketResponse(kind === 'RECORDED_SALES' ? [{ id: 'sale', formattedAddress: '125 Main St, Austin, TX 78701', latitude: 30.11, longitude: -97.11, lastSalePrice: 410000, lastSaleDate: '2026-06-01T00:00:00.000Z' }] :
+        [{ id: 'listing', formattedAddress: '130 Main St, Austin, TX 78701', latitude: 30.12, longitude: -97.12, status: 'Active', price: 450000 }], kind, query, subject)
+    }, undefined, () => new Date('2026-09-29T12:00:00.000Z'));
+    const response = await market.get(created.property.id);
+    expect(response.recordedSales.candidates[0]?.evidenceType).toBe('RECORDED_SALE');
+    expect(response.activeListings.candidates[0]?.evidenceType).toBe('ACTIVE_ASKING_PRICE');
+    const snapshots = await pool.query('SELECT "kind", "normalizedPayload" FROM "DataSnapshot" WHERE "propertyId"=$1 ORDER BY "kind"', [created.property.id]);
+    expect(snapshots.rows.map(row => row.kind)).toEqual(['ACTIVE_LISTINGS', 'PROPERTY_PROFILE', 'RECORDED_SALES']);
+    expect(snapshots.rows.find(row => row.kind === 'RECORDED_SALES')?.normalizedPayload.query.saleDateRangeDays).toBe(365);
+    expect((await market.get(created.property.id)).recordedSales.cacheStatus).toBe('HIT');
+    await propertyService.delete(created.property.id);
     expect((await pool.query('SELECT COUNT(*)::int AS count FROM "DataSnapshot"')).rows[0]?.count).toBe(0);
   });
 });

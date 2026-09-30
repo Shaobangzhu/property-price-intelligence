@@ -18,6 +18,11 @@ const makeRecord = (id = firstId, address = '123 Main St, Apt 2, Austin, TX 7870
   },
   cache: { source: 'RENTCAST', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-13T12:00:00.000Z', freshness: 'FRESH', cacheStatus: null }
 });
+const marketResponse = (propertyId = firstId) => ({
+  propertyId,
+  recordedSales: { kind: 'RECORDED_SALES', candidates: [{ id: 'recorded_sale:sale1', evidenceType: 'RECORDED_SALE', providerId: 'sale1', address: '125 Main St, Austin, TX 78701', latitude: 30.11, longitude: -97.11, propertyType: 'Condo', bedrooms: 2, bathrooms: null, livingAreaSqft: 1180, lotSizeSqft: null, yearBuilt: null, price: 410000, eventDate: '2026-06-01T00:00:00.000Z', distanceMiles: 0.91, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-06T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: 365 }, errorCode: null },
+  activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [{ id: 'active_asking_price:listing1', evidenceType: 'ACTIVE_ASKING_PRICE', providerId: 'listing1', address: '130 Main St, Austin, TX 78701', latitude: 30.12, longitude: -97.12, propertyType: 'Condo', bedrooms: null, bathrooms: 2, livingAreaSqft: null, lotSizeSqft: null, yearBuilt: null, price: 450000, eventDate: '2026-09-01T00:00:00.000Z', distanceMiles: 1.2, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-09-30T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: null }, errorCode: null }
+});
 const renderAt = (path = '/dashboard') => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -26,12 +31,13 @@ beforeEach(() => {
     const url = String(input);
     if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
     if (url.includes('/properties?')) return Response.json({ items: [], total: 0, page: 1, pageSize: 5 });
+    if (url.includes('/market-context')) return Response.json(marketResponse());
     if (url.endsWith('/properties/resolve') && init?.method === 'POST') return Response.json(makeRecord());
     return Response.json({ error: { code: 'PROPERTY_NOT_FOUND', message: 'not found', requestId: 'synthetic' } }, { status: 404 });
   });
   vi.stubGlobal('fetch', fetchMock);
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
 
 describe('Dashboard', () => {
   it('navigates to History and starts with no selected property or fixture prices', async () => {
@@ -44,12 +50,19 @@ describe('Dashboard', () => {
     await waitFor(() => expect(screen.getByText('History empty')).toBeTruthy());
   });
 
-  it('resolves an entered address and leaves pricing and comparables deferred', async () => {
+  it('renders separate sale and asking evidence and synchronizes row and map selection', async () => {
     renderAt();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: '123 Main St, Apt 2, Austin, TX 78701' })).toBeTruthy());
-    expect(screen.getByText('Comparable sales not available yet')).toBeTruthy();
+    await screen.findByRole('heading', { name: 'Recorded Sales' });
+    expect(screen.getByRole('heading', { name: 'Active Listings' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Sold Price' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Asking Price' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Select recorded sale 125 Main/ }));
+    expect(screen.getByRole('button', { name: /Recorded sale marker: 125 Main/ }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /Active listing marker: 130 Main/ }));
+    expect(screen.getByRole('row', { name: /130 Main/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('button', { name: 'Offer Price' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getAllByText('Not analyzed', { exact: true }).length).toBe(2);
     expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/properties/resolve'))).toHaveLength(1);
@@ -71,6 +84,24 @@ describe('Dashboard', () => {
     expect(grocery.getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('keeps the Dashboard usable when map coordinates are unavailable', async () => {
+    window.history.replaceState({}, '', '/dashboard?mapUnavailableMode=1');
+    fetchMock.mockImplementation(async (input: string) => {
+      if (String(input).endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
+      if (String(input).includes('/market-context')) return Response.json(marketResponse());
+      const value = makeRecord();
+      value.property.latitude = null;
+      value.property.longitude = null;
+      return Response.json(value);
+    });
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText('Map unavailable. Property and market evidence remain available.');
+    expect(screen.getByRole('heading', { name: '123 Main St, Apt 2, Austin, TX 78701' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Comparable Candidates' })).toBeTruthy();
+  });
+
   it('keeps a late A response from replacing the newer B search', async () => {
     let resolveA: ((value: Response) => void) | undefined;
     fetchMock.mockImplementation((input: string, init?: RequestInit) => {
@@ -89,6 +120,37 @@ describe('Dashboard', () => {
     await screen.findByRole('heading', { name: '222 Oak Ave, Apt 2, Austin, TX 78701' });
     resolveA?.(Response.json(makeRecord(firstId, '111 Pine St, Apt 2, Austin, TX 78701')));
     await waitFor(() => expect(screen.queryByRole('heading', { name: '111 Pine St, Apt 2, Austin, TX 78701' })).toBeNull());
+  });
+
+  it('does not attach late A market evidence to B after switching subjects', async () => {
+    let resolveMarketA: ((value: Response) => void) | undefined;
+    fetchMock.mockImplementation((input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health/live')) return Promise.resolve(Response.json({ status: 'live', requestId: 'synthetic' }));
+      if (url.includes(`${firstId}/market-context`)) return new Promise<Response>(resolve => { resolveMarketA = resolve; });
+      if (url.includes(`${secondId}/market-context`)) {
+        const response = marketResponse(secondId);
+        response.recordedSales.candidates[0]!.address = 'B Comparable, Austin, TX 78701';
+        return Promise.resolve(Response.json(response));
+      }
+      const address = JSON.parse(String(init?.body)).address as string;
+      return Promise.resolve(Response.json(address.startsWith('111') ? makeRecord(firstId, '111 Pine St, Apt 2, Austin, TX 78701') : makeRecord(secondId, '222 Oak Ave, Apt 2, Austin, TX 78701')));
+    });
+    renderAt();
+    const input = screen.getByRole('textbox', { name: 'Search a property address' });
+    fireEvent.change(input, { target: { value: '111 Pine St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('heading', { name: '111 Pine St, Apt 2, Austin, TX 78701' });
+    await waitFor(() => expect(resolveMarketA).toBeDefined());
+    fireEvent.change(input, { target: { value: '222 Oak Ave, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('heading', { name: '222 Oak Ave, Apt 2, Austin, TX 78701' });
+    await screen.findByRole('button', { name: /Select recorded sale B Comparable/ });
+    const late = marketResponse(firstId);
+    late.recordedSales.candidates[0]!.address = 'A Comparable, Austin, TX 78701';
+    resolveMarketA?.(Response.json(late));
+    await waitFor(() => expect(screen.queryByText('A Comparable, Austin, TX 78701')).toBeNull());
+    expect(screen.getByRole('button', { name: /Select recorded sale B Comparable/ })).toBeTruthy();
   });
 
   it('shows server and property errors without substituting demo data', async () => {

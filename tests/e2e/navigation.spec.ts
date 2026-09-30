@@ -13,6 +13,9 @@ const makeRecord = () => ({
   },
   cache: { source: 'RENTCAST', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-13T12:00:00.000Z', freshness: 'FRESH', cacheStatus: 'MISS' as string | null }
 });
+const market = () => ({ propertyId: id,
+  recordedSales: { kind: 'RECORDED_SALES', candidates: [{ id: 'recorded_sale:one', evidenceType: 'RECORDED_SALE', providerId: 'one', address: '125 Main St, Austin, TX 78701', latitude: 30.11, longitude: -97.11, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1180, lotSizeSqft: null, yearBuilt: null, price: 410000, eventDate: '2026-06-01T00:00:00.000Z', distanceMiles: 0.91, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-06T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: 365 }, errorCode: null },
+  activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [{ id: 'active_asking_price:two', evidenceType: 'ACTIVE_ASKING_PRICE', providerId: 'two', address: '130 Main St, Austin, TX 78701', latitude: 30.12, longitude: -97.12, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1200, lotSizeSqft: null, yearBuilt: null, price: 450000, eventDate: '2026-09-01T00:00:00.000Z', distanceMiles: 1.2, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-09-30T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: null }, errorCode: null } });
 
 test('searches a subject and manages its saved History record without external calls', async ({ page }) => {
   let record = makeRecord();
@@ -25,6 +28,7 @@ test('searches a subject and manages its saved History record without external c
     let status = 200;
     let body: unknown;
     if (url.pathname.endsWith('/resolve') && method === 'POST') { saved = true; body = record; }
+    else if (url.pathname.endsWith('/market-context')) body = market();
     else if (url.pathname.endsWith('/refresh') && method === 'POST') { record.cache.cacheStatus = 'REFRESHED'; body = record; }
     else if (method === 'PATCH') { record.property.notes = (route.request().postDataJSON() as { notes: string }).notes; body = record; }
     else if (method === 'DELETE') { saved = false; status = 204; body = null; }
@@ -32,11 +36,17 @@ test('searches a subject and manages its saved History record without external c
     else body = record;
     await route.fulfill({ status, contentType: 'application/json', body: body === null ? '' : JSON.stringify(body) });
   });
-  await page.goto('/');
+  await page.goto('/dashboard?mapTestMode=1');
   await expect(page.getByText('No property selected')).toBeVisible();
   await page.getByRole('textbox', { name: 'Search a property address' }).fill(address);
   await page.getByRole('button', { name: 'Search' }).click();
   await expect(page.getByRole('heading', { name: address })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Sold Price' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Asking Price' })).toBeVisible();
+  await page.getByRole('button', { name: /Select recorded sale 125 Main/ }).click();
+  await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /Active listing marker: 130 Main/ }).click();
+  await expect(page.getByRole('row', { name: /130 Main St/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('button', { name: 'Offer Price' })).toBeDisabled();
   await page.getByRole('link', { name: 'History' }).click();
   await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();

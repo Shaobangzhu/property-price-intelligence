@@ -4,7 +4,13 @@ import { addressMatches, normalizeAddressKey, requestedUnit } from './address.js
 import { ProviderError, type NormalizedProviderProperty, type PropertyDataProvider } from './provider.js';
 import type { PropertyRepository, StoredRecord } from './repository.js';
 
-const PROFILE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+export function parseProfileTtlDays(env: NodeJS.ProcessEnv): number {
+  const raw = env.PROPERTY_PROFILE_TTL_DAYS;
+  if (raw === undefined || raw === '') return 14;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 60) throw new Error('Invalid configuration: PROPERTY_PROFILE_TTL_DAYS');
+  return value;
+}
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 export class PropertyError extends Error {
@@ -33,7 +39,11 @@ function providerFailure(error: ProviderError): PropertyError {
 
 export class PropertyService {
   private readonly inFlight = new Map<string, Promise<PropertyEnvelope>>();
-  constructor(private readonly repository: PropertyRepository, private readonly provider: PropertyDataProvider, private readonly now: () => Date = () => new Date()) {}
+  constructor(private readonly repository: PropertyRepository, private readonly provider: PropertyDataProvider, private readonly now: () => Date = () => new Date(), private readonly profileTtlDays = 14) {}
+
+  private profileExpiresAt(snapshot: NonNullable<StoredRecord['snapshot']>): string {
+    return new Date(Math.min(new Date(snapshot.expiresAt).getTime(), new Date(snapshot.fetchedAt).getTime() + this.profileTtlDays * 86_400_000)).toISOString();
+  }
 
   private envelope(record: StoredRecord, cacheStatus: PropertyEnvelope['cache']['cacheStatus'] = null): PropertyEnvelope {
     const { property, snapshot } = record;
@@ -48,8 +58,8 @@ export class PropertyService {
       cache: {
         source: snapshot?.provider ?? null,
         fetchedAt: snapshot?.fetchedAt ?? null,
-        expiresAt: snapshot?.expiresAt ?? null,
-        freshness: !snapshot ? 'UNKNOWN' : cacheStatus === 'STALE_FALLBACK' || (property.refreshFailedAt !== null && new Date(property.refreshFailedAt).getTime() >= new Date(snapshot.fetchedAt).getTime()) ? 'STALE' : new Date(snapshot.expiresAt).getTime() > this.now().getTime() ? 'FRESH' : 'STALE',
+        expiresAt: snapshot ? this.profileExpiresAt(snapshot) : null,
+        freshness: !snapshot ? 'UNKNOWN' : cacheStatus === 'STALE_FALLBACK' || (property.refreshFailedAt !== null && new Date(property.refreshFailedAt).getTime() >= new Date(snapshot.fetchedAt).getTime()) ? 'STALE' : new Date(this.profileExpiresAt(snapshot)).getTime() > this.now().getTime() ? 'FRESH' : 'STALE',
         cacheStatus
       }
     };
@@ -70,7 +80,7 @@ export class PropertyService {
 
   private async resolveInternal(address: string, key: string, force: boolean, known?: StoredRecord): Promise<PropertyEnvelope> {
     const existing = known ?? await this.repository.findByAddressKey(key);
-    if (!force && existing?.snapshot && new Date(existing.snapshot.expiresAt).getTime() > this.now().getTime()
+    if (!force && existing?.snapshot && new Date(this.profileExpiresAt(existing.snapshot)).getTime() > this.now().getTime()
       && (!existing.property.refreshFailedAt || new Date(existing.property.refreshFailedAt).getTime() < new Date(existing.snapshot.fetchedAt).getTime())) return this.envelope(existing, 'HIT');
     let candidates: NormalizedProviderProperty[];
     try { candidates = await this.provider.search(address); }
@@ -92,7 +102,7 @@ export class PropertyService {
       saved = await this.repository.saveProfile({
         profile, normalizedAddressKey: normalizeAddressKey(profile.formattedAddress),
         queryHash: hash(key), contentHash: hash(JSON.stringify(profile)),
-        fetchedAt: fetchedAt.toISOString(), expiresAt: new Date(fetchedAt.getTime() + PROFILE_TTL_MS).toISOString()
+        fetchedAt: fetchedAt.toISOString(), expiresAt: new Date(fetchedAt.getTime() + this.profileTtlDays * 86_400_000).toISOString()
       });
     } catch (error) {
       if (error instanceof Error && error.message === 'PROPERTY_IDENTITY_CONFLICT') throw new PropertyError('PROPERTY_IDENTITY_CONFLICT', 409);

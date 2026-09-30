@@ -11,6 +11,6 @@ const contexts: Record<MapContext, { title: string; message: string }> = {
 export function ContextPanel({ activeContext }: { activeContext: MapContext | null }) {
   const selected = activeContext ? contexts[activeContext] : null;
   return <aside className="card context-card" aria-labelledby="context-panel-title"><div className="card-heading"><div><span className="eyebrow">Selected layer</span><h2 id="context-panel-title">{selected?.title ?? 'Context details'}</h2></div><span className="section-tag">Deferred</span></div>
-    <FeedbackState kind="empty" title={selected ? 'Data unavailable' : 'No context selected'} message={selected?.message ?? 'Choose one context layer to see its availability. All layers can be off.'} compact />
+    <FeedbackState kind="empty" title={selected ? 'Coming in next milestone' : 'No context selected'} message={selected?.message ?? 'Choose one context layer to see its availability. All layers can be off.'} compact />
   </aside>;
 }

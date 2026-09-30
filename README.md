@@ -1,6 +1,6 @@
 # Property Price Intelligence
 
-PPI is a local-first prototype for real estate pricing decisions. It has a React/Express workspace and a dedicated Docker PostgreSQL database. Dashboard searches RentCast for a subject property when its 14-day PPI cache is missing or stale; History shows saved subject properties. Comparable sales, pricing, and GIS data remain deferred. Local-first means the app and database run locally while uncached property searches require RentCast.
+PPI is a local-first prototype for real estate pricing decisions. It has a React/Express workspace and a dedicated Docker PostgreSQL database. Dashboard searches RentCast for a subject property when its 14-day PPI cache is missing or stale, then retrieves bounded nearby recorded sales and active listings with separate 7-day and 24-hour caches. An ArcGIS map shows the subject and geocoded candidates. History shows saved subject properties. Pricing and context layers remain deferred. Local-first means the app and database run locally while uncached provider searches require network access.
 
 ## Prerequisites
 
@@ -24,7 +24,9 @@ Open `http://localhost:5173`. API listens at `127.0.0.1:3001`; Vite proxies `/ap
 
 Dashboard starts without a selected property. Enter a full address, including apartment or unit, and Search. The server returns a fresh saved profile when available; otherwise it makes one RentCast property-record request, validates one exact subject match, and saves a sanitized profile snapshot. An unavailable or ambiguous property displays an error. A provider failure can show a clearly marked stale saved profile, with its original fetched time preserved. No fixture records substitute for live results.
 
-History lists only subjects explicitly searched through PPI. Select a row to view facts, edit notes or supported numeric overrides, explicitly refresh, or delete the PPI record after confirmation. Overrides affect displayed values while original provider fields and snapshots stay intact. Offer and Listing remain “Not analyzed” and their buttons are disabled. The map and context panels remain placeholders.
+History lists only subjects explicitly searched through PPI. Select a row to view facts, edit notes or supported numeric overrides, explicitly refresh, or delete the PPI record after confirmation. Overrides affect displayed values while original provider fields and snapshots stay intact. Dashboard retrieves up to 25 nearby property records sold within 365 days and up to 25 active sale listings within two miles by default. Recorded sale prices appear only as **Sold Price**; active listing asks appear only as **Asking Price**. Inactive listings and provider AVMs are not used. The candidate list is market evidence, not a pricing algorithm. Select a row or map marker to see the same candidate. Candidates without coordinates remain in the table without a marker. Offer and Listing remain “Not analyzed” and their buttons are disabled. Schools, Grocery, Wildfire, and Faults selectors show a deferred state without map features.
+
+The browser uses only `VITE_ARCGIS_API_KEY` for the ArcGIS basemap. The server-only Places key is never sent to it. A missing, blocked, or failed map shows an unavailable message while subject facts and market evidence remain usable. Cache and bounded market settings can be changed with `PROPERTY_PROFILE_TTL_DAYS`, `MARKET_RADIUS_MILES`, `MARKET_RESULT_LIMIT`, `MARKET_SALE_DATE_DAYS`, `MARKET_SALES_TTL_HOURS`, and `MARKET_LISTINGS_TTL_HOURS` in the existing `server/.env`; preserve current values when editing that user-owned file. Defaults and accepted bounds are in `server/.env.example`. Changes to search settings generate a distinct snapshot query hash. No automatic search broadening, pagination, or retry occurs.
 
 ## Commands
 
@@ -34,4 +36,4 @@ To stop PPI PostgreSQL, run `npm run db:down`. It stops PPI's Compose service an
 
 `npm run smoke:providers` is a zero-request dry run. To permit a bounded live run, set `ALLOW_LIVE_API_TESTS=true` yourself in `server/.env` or the process environment, provide only the smoke inputs and keys you intend to test, then run `npm run smoke:providers -- --live`. The runner makes at most six requests, counts failures, disables retries, and writes no raw provider records. Leave the flag false for ordinary work. The browser `VITE_ARCGIS_API_KEY` is for basemap access only; `ARCGIS_PLACES_API_KEY` is server-only. Key presence never proves authentication.
 
-See [local database](docs/database-local.md), [architecture](docs/architecture.md), [provider findings](docs/provider-capabilities.md), and [milestone 03 handoff](docs/milestone-03-handoff.md).
+See [local database](docs/database-local.md), [architecture](docs/architecture.md), [provider findings](docs/provider-capabilities.md), and [milestone 04 handoff](docs/milestone-04-handoff.md).

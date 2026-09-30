@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { ListPropertiesQuery, PropertyId, PropertyPatchInput, ResolvePropertyInput } from '@ppi/shared';
 import { PropertyError, type PropertyService } from './service.js';
+import type { MarketEvidenceService } from '../market/service.js';
 
 function idFrom(request: Request): string {
   const parsed = PropertyId.safeParse(request.params.id);
@@ -8,7 +9,7 @@ function idFrom(request: Request): string {
   return parsed.data;
 }
 
-export function propertyRouter(service: PropertyService) {
+export function propertyRouter(service: PropertyService, market?: MarketEvidenceService) {
   const router = Router();
   router.post('/resolve', async (req, res) => {
     const parsed = ResolvePropertyInput.safeParse(req.body);
@@ -21,6 +22,7 @@ export function propertyRouter(service: PropertyService) {
     res.json(await service.list(parsed.data));
   });
   router.get('/:id', async (req, res) => res.json(await service.get(idFrom(req))));
+  if (market) router.get('/:id/market-context', async (req, res) => res.json(await market.get(idFrom(req))));
   router.patch('/:id', async (req, res) => {
     const parsed = PropertyPatchInput.safeParse(req.body);
     if (!parsed.success) throw new PropertyError('INVALID_INPUT', 400);

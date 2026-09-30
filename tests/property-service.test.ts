@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PropertyPatchInput } from '@ppi/shared';
 import { normalizeAddressKey } from '../server/src/properties/address.js';
 import { normalizeRentCastResponse, ProviderError, type NormalizedProviderProperty, type PropertyDataProvider } from '../server/src/properties/provider.js';
-import { PropertyError, PropertyService } from '../server/src/properties/service.js';
+import { PropertyError, PropertyService, parseProfileTtlDays } from '../server/src/properties/service.js';
 import type { PropertyRepository, SaveProfile, StoredProperty, StoredRecord, StoredSnapshot } from '../server/src/properties/repository.js';
 
 const address = '123 Main St, Apt 2, Austin, TX 78701';
@@ -62,10 +62,25 @@ function setup() {
   const provider: PropertyDataProvider = { name: 'RENTCAST', search };
   let current = new Date('2026-09-29T12:00:00.000Z');
   const service = new PropertyService(repository, provider, () => current);
-  return { repository, provider, search, service, advance: (days: number) => { current = new Date(current.getTime() + days * 86_400_000); } };
+  return { repository, provider, search, service, current: () => current, advance: (days: number) => { current = new Date(current.getTime() + days * 86_400_000); } };
 }
 
 describe('property resolution and persistence rules', () => {
+  it('keeps profile expiry configurable with a bounded default', () => {
+    expect(parseProfileTtlDays({})).toBe(14);
+    expect(parseProfileTtlDays({ PROPERTY_PROFILE_TTL_DAYS: '7' })).toBe(7);
+    expect(() => parseProfileTtlDays({ PROPERTY_PROFILE_TTL_DAYS: '0' })).toThrow('PROPERTY_PROFILE_TTL_DAYS');
+  });
+
+  it('uses a shortened profile TTL on an existing saved snapshot', async () => {
+    const { repository, provider, service, search, advance, current } = setup();
+    const first = await service.resolve(address);
+    advance(8);
+    const shorter = new PropertyService(repository, provider, current, 7);
+    expect((await shorter.get(first.property.id)).cache.freshness).toBe('STALE');
+    expect((await shorter.resolve(address)).cache.cacheStatus).toBe('REFRESHED');
+    expect(search).toHaveBeenCalledTimes(2);
+  });
   it('uses a fresh 14-day snapshot and normalizes duplicate address spellings', async () => {
     const { service, search, repository } = setup();
     const first = await service.resolve(address);

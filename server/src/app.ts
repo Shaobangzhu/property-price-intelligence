@@ -6,8 +6,9 @@ import type { CheckDatabase } from './infrastructure/database.js';
 import type { PropertyService } from './properties/service.js';
 import { PropertyError } from './properties/service.js';
 import { propertyRouter } from './properties/routes.js';
+import type { MarketEvidenceService } from './market/service.js';
 
-export function createApp(options: { checkDatabase: CheckDatabase; origins: string[]; propertyService?: PropertyService; log?: (entry: { code: string; requestId: string }) => void }) {
+export function createApp(options: { checkDatabase: CheckDatabase; origins: string[]; propertyService?: PropertyService; marketService?: MarketEvidenceService; log?: (entry: { code: string; requestId: string }) => void }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
@@ -16,7 +17,7 @@ export function createApp(options: { checkDatabase: CheckDatabase; origins: stri
   app.use(express.json({ limit: '32kb' }));
   app.get('/api/health/live', (_req, res) => res.json({ status: 'live', requestId: res.locals.requestId }));
   app.get('/api/health/ready', async (_req, res) => { const ready = await options.checkDatabase(); res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'unavailable', requestId: res.locals.requestId }); });
-  if (options.propertyService) app.use('/api/properties', propertyRouter(options.propertyService));
+  if (options.propertyService) app.use('/api/properties', propertyRouter(options.propertyService, options.marketService));
   app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found', requestId: res.locals.requestId } }));
   const errors: ErrorRequestHandler = (error, _req, res, _next) => {
     void _next;

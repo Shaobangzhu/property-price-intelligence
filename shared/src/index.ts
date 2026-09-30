@@ -70,3 +70,28 @@ export const PropertyEnvelope = z.object({ property: PropertyRecord, cache: Prop
 export type PropertyEnvelope = z.infer<typeof PropertyEnvelope>;
 export const PropertyListResponse = z.object({ items: z.array(PropertyEnvelope), total: z.number().int().nonnegative(), page: z.number().int().positive(), pageSize: z.number().int().positive() });
 export type PropertyListResponse = z.infer<typeof PropertyListResponse>;
+
+export const MarketEvidenceKind = z.enum(['RECORDED_SALES', 'ACTIVE_LISTINGS']);
+export type MarketEvidenceKind = z.infer<typeof MarketEvidenceKind>;
+export const MarketComparableCandidate = z.object({
+  id: z.string().min(1), evidenceType: z.enum(['RECORDED_SALE', 'ACTIVE_ASKING_PRICE']),
+  providerId: z.string().nullable(), address: z.string().min(1),
+  latitude: NullableNumber, longitude: NullableNumber, propertyType: z.string().nullable(),
+  bedrooms: NullableNumber, bathrooms: NullableNumber, livingAreaSqft: z.number().int().nullable(),
+  lotSizeSqft: z.number().int().nullable(), yearBuilt: z.number().int().nullable(),
+  price: NullableNumber, eventDate: z.string().nullable(), distanceMiles: NullableNumber,
+  source: z.literal('RENTCAST')
+});
+export type MarketComparableCandidate = z.infer<typeof MarketComparableCandidate>;
+export const MarketQuery = z.object({ latitude: z.number(), longitude: z.number(), radiusMiles: z.number().positive(), limit: z.number().int().positive(), saleDateRangeDays: z.number().int().positive().nullable() });
+export type MarketQuery = z.infer<typeof MarketQuery>;
+export const MarketEvidenceGroup = z.object({
+  kind: MarketEvidenceKind, candidates: z.array(MarketComparableCandidate),
+  source: z.literal('RENTCAST').nullable(), freshness: z.enum(['FRESH', 'STALE', 'UNAVAILABLE']),
+  cacheStatus: z.enum(['HIT', 'MISS', 'REFRESHED', 'STALE_FALLBACK', 'ERROR', 'NO_COORDINATES']),
+  fetchedAt: z.iso.datetime().nullable(), expiresAt: z.iso.datetime().nullable(),
+  query: MarketQuery.nullable(), errorCode: z.string().nullable()
+});
+export type MarketEvidenceGroup = z.infer<typeof MarketEvidenceGroup>;
+export const MarketContextResponse = z.object({ propertyId: PropertyId, recordedSales: MarketEvidenceGroup, activeListings: MarketEvidenceGroup });
+export type MarketContextResponse = z.infer<typeof MarketContextResponse>;

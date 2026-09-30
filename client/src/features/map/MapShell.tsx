@@ -1,15 +1,97 @@
-import type { MapContext } from '@ppi/shared';
+import { useEffect, useRef, useState } from 'react';
+import type { MapContext, MarketComparableCandidate, PropertyRecord } from '@ppi/shared';
 
 const contexts: { value: MapContext; label: string }[] = [
   { value: 'schools', label: 'Schools' }, { value: 'grocery', label: 'Grocery' },
   { value: 'wildfire', label: 'Wildfire' }, { value: 'faults', label: 'Faults' }
 ];
+type MapData = { subject: PropertyRecord; candidates: MarketComparableCandidate[]; selectedId: string | null };
+const isTestMode = () => typeof location !== 'undefined' &&
+  (import.meta.env.MODE === 'test' ? !new URLSearchParams(location.search).has('mapUnavailableMode') : import.meta.env.DEV && new URLSearchParams(location.search).has('mapTestMode'));
 
-export function MapShell({ activeContext, onContextChange }: { activeContext: MapContext | null; onContextChange: (context: MapContext | null) => void }) {
-  return <section className="card map-card" aria-labelledby="map-title"><div className="card-heading map-heading"><div><span className="eyebrow">Location context</span><h2 id="map-title">Property map</h2></div><span className="section-tag">Schematic demo</span></div>
+function ArcgisMap({ subject, candidates, selectedId, onSelect }: MapData & { onSelect: (id: string) => void }) {
+  const testMode = isTestMode();
+  const container = useRef<HTMLDivElement>(null);
+  const data = useRef<MapData>({ subject, candidates, selectedId });
+  const select = useRef(onSelect);
+  const redraw = useRef<(() => void) | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  data.current = { subject, candidates, selectedId };
+  select.current = onSelect;
+  useEffect(() => { redraw.current?.(); }, [subject, candidates, selectedId]);
+
+  useEffect(() => {
+    if (testMode) { setStatus('ready'); return; }
+    const key = import.meta.env.VITE_ARCGIS_API_KEY?.trim();
+    if (!key || key.length < 20 || !container.current || subject.latitude === null || subject.longitude === null) { setStatus('unavailable'); return; }
+    let disposed = false;
+    let destroy: (() => void) | null = null;
+    void (async () => {
+      try {
+        const [{ default: esriConfig }, { default: Map }, { default: MapView }, { default: GraphicsLayer }, { default: Graphic }] = await Promise.all([
+          import('@arcgis/core/config.js'), import('@arcgis/core/Map.js'), import('@arcgis/core/views/MapView.js'),
+          import('@arcgis/core/layers/GraphicsLayer.js'), import('@arcgis/core/Graphic.js')
+        ]);
+        if (disposed || !container.current) return;
+        // ArcGIS error details may contain the browser token; show our redacted fallback instead.
+        esriConfig.log.level = 'none';
+        esriConfig.apiKey = key;
+        const subjectLayer = new GraphicsLayer({ title: 'Subject Property' });
+        const salesLayer = new GraphicsLayer({ title: 'Recorded Sales' });
+        const listingsLayer = new GraphicsLayer({ title: 'Active Listings' });
+        const map = new Map({ basemap: 'arcgis/light-gray', layers: [subjectLayer, salesLayer, listingsLayer] });
+        const view = new MapView({ container: container.current, map, center: [data.current.subject.longitude!, data.current.subject.latitude!], zoom: 13,
+          constraints: { minZoom: 3, maxZoom: 19 } });
+        const popup = (title: string, detail: string) => ({ title, content: () => { const element = document.createElement('div'); element.textContent = detail; return element; } });
+        const draw = () => {
+          const { subject: current, candidates: items, selectedId: selected } = data.current;
+          subjectLayer.removeAll(); salesLayer.removeAll(); listingsLayer.removeAll();
+          if (current.latitude !== null && current.longitude !== null) subjectLayer.add(new Graphic({
+            geometry: { type: 'point', latitude: current.latitude, longitude: current.longitude },
+            symbol: { type: 'simple-marker', style: 'diamond', size: 22, color: '#174f9d', outline: { color: '#fff', width: 2 } },
+            attributes: { id: current.id }, popupTemplate: popup('Subject property', `${current.formattedAddress} · ${current.propertyType ?? 'Type unavailable'} · ${current.effectiveValues.bedrooms ?? '—'} beds · ${current.effectiveValues.bathrooms ?? '—'} baths`)
+          }));
+          for (const item of items) {
+            if (item.latitude === null || item.longitude === null) continue;
+            const sale = item.evidenceType === 'RECORDED_SALE';
+            const layer = sale ? salesLayer : listingsLayer;
+            layer.add(new Graphic({
+              geometry: { type: 'point', latitude: item.latitude, longitude: item.longitude },
+              symbol: { type: 'simple-marker', style: sale ? 'circle' : 'square', size: item.id === selected ? 18 : 12,
+                color: sale ? '#17896f' : '#d98b35', outline: { color: item.id === selected ? '#172b43' : '#fff', width: item.id === selected ? 3 : 1.5 } },
+              attributes: { id: item.id }, popupTemplate: popup(sale ? 'Recorded sale' : 'Active listing', `${item.address} · ${sale ? 'Sold Price' : 'Asking Price'}: ${item.price === null ? 'Unavailable' : `$${item.price.toLocaleString()}`}`)
+            }));
+          }
+        };
+        redraw.current = draw;
+        draw();
+        const click = view.on('click', event => {
+          void view.hitTest(event, { include: [salesLayer, listingsLayer] }).then(result => {
+            const graphic = result.results.find(hit => 'graphic' in hit)?.graphic;
+            const id = graphic?.attributes?.id;
+            if (typeof id === 'string') select.current(id);
+          }).catch(() => {});
+        });
+        let layerFailed = false;
+        const layerError = view.on('layerview-create-error', () => { layerFailed = true; if (!disposed) setStatus('unavailable'); });
+        destroy = () => { click.remove(); layerError.remove(); redraw.current = null; view.destroy(); };
+        await Promise.all([view.when(), map.basemap?.loadAll()]);
+        if (!disposed && !layerFailed) setStatus('ready');
+      } catch { if (!disposed) setStatus('unavailable'); }
+    })();
+    return () => { disposed = true; destroy?.(); redraw.current = null; };
+  }, []);
+
+  if (testMode) return <div className="map-test-mode" aria-label="Map test mode">{candidates.filter(item => item.latitude !== null && item.longitude !== null).map(item =>
+    <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}>{item.evidenceType === 'RECORDED_SALE' ? 'Recorded sale marker' : 'Active listing marker'}: {item.address}</button>)}</div>;
+  return <div className="map-canvas arcgis-canvas" aria-label="ArcGIS property map"><div ref={container} className="arcgis-view" />{status !== 'ready' && <div className="map-fallback" role="status">{status === 'loading' ? 'Loading ArcGIS map…' : 'Map unavailable. Property and market evidence remain available.'}</div>}</div>;
+}
+
+export function MapShell({ subject, candidates, selectedId, onSelect, activeContext, onContextChange }: MapData & { onSelect: (id: string) => void; activeContext: MapContext | null; onContextChange: (context: MapContext | null) => void }) {
+  return <section className="card map-card" aria-labelledby="map-title"><div className="card-heading map-heading"><div><span className="eyebrow">Location context</span><h2 id="map-title">Property map</h2></div><span className="section-tag">ArcGIS</span></div>
     <div className="map-context-picker" role="group" aria-label="Map context"><span className="map-context-label">Context layers</span><div className="context-buttons">{contexts.map(context => <button type="button" key={context.value} className={`context-button${activeContext === context.value ? ' is-active' : ''}`} aria-pressed={activeContext === context.value} onClick={() => onContextChange(activeContext === context.value ? null : context.value)}>{context.label}</button>)}</div></div>
-    <div className="map-canvas" role="img" aria-label="Schematic map placeholder; no geographic positions are represented"><span className="map-road map-road-a"/><span className="map-road map-road-b"/><span className="map-road map-road-c"/><span className="map-block map-block-a"/><span className="map-block map-block-b"/><span className="map-block map-block-c"/><span className="map-block map-block-d"/><div className="map-status-label">Illustrative layout · no GIS data</div><div className="map-placeholder-content"><span className="map-pin" aria-hidden="true">⌖</span><strong>Map integration available in Milestone 04</strong><span>Subject, comparable, and context layers will appear here.</span></div><div className="map-control-reserve" aria-label="Zoom and location controls reserved for future map integration"><span>+</span><span>−</span><span>⌖</span></div></div>
-    <div className="map-legend"><span className="legend-label">Layer slots</span><span><i className="legend-dot subject-dot"/>Subject Property</span><span><i className="legend-dot comp-dot"/>Comparable Sales</span><span><i className="legend-dot context-dot"/>Context: {activeContext ? contexts.find(item => item.value === activeContext)?.label : 'Off'}</span></div>
-    <p className="map-selection-note">Subject, comparable, and context layers will connect in Milestone 04.</p>
+    <ArcgisMap subject={subject} candidates={candidates} selectedId={selectedId} onSelect={onSelect} />
+    <div className="map-legend"><span className="legend-label">Map markers</span><span><i className="legend-dot subject-dot"/>Subject Property</span><span><i className="legend-dot comp-dot"/>Recorded Sales</span><span><i className="legend-dot listing-dot"/>Active Listings</span></div>
+    <p className="map-selection-note">Select a row or marker to inspect a candidate. {activeContext ? `${contexts.find(item => item.value === activeContext)?.label} context is coming in the next milestone.` : 'Context layers are coming in the next milestone.'}</p>
   </section>;
 }
