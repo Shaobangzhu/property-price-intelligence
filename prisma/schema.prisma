@@ -1,4 +1,3 @@
-// Prisma 6.12 groundwork. Business models and the first migration belong to milestone 03.
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -6,4 +5,54 @@ datasource db {
 
 generator client {
   provider = "prisma-client-js"
+}
+
+model Property {
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider             String
+  providerPropertyId   String?
+  normalizedAddressKey String         @unique
+  formattedAddress     String
+  addressLine1         String
+  unit                 String?
+  city                 String
+  state                String
+  zipCode              String
+  latitude             Decimal?       @db.Decimal(10, 7)
+  longitude            Decimal?       @db.Decimal(10, 7)
+  propertyType         String?
+  bedrooms             Decimal?       @db.Decimal(5, 2)
+  bathrooms            Decimal?       @db.Decimal(5, 2)
+  livingAreaSqft       Int?
+  lotSizeSqft          Int?
+  yearBuilt            Int?
+  currentListPrice     Decimal?       @db.Decimal(14, 2)
+  refreshFailedAt      DateTime?      @db.Timestamptz(6)
+  notes                String?
+  userOverrides        Json?
+  createdAt            DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime       @updatedAt @db.Timestamptz(6)
+  snapshots            DataSnapshot[]
+
+  @@unique([provider, providerPropertyId])
+  @@index([updatedAt])
+  @@index([formattedAddress])
+}
+
+model DataSnapshot {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  propertyId        String   @db.Uuid
+  property          Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  kind              String
+  provider          String
+  fetchedAt         DateTime @db.Timestamptz(6)
+  sourceDataAsOf    DateTime? @db.Timestamptz(6)
+  expiresAt         DateTime @db.Timestamptz(6)
+  queryHash         String
+  contentHash       String
+  normalizedPayload Json
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([propertyId, kind, fetchedAt(sort: Desc)])
+  @@index([expiresAt])
 }

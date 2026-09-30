@@ -20,6 +20,7 @@
     "db:ps": "node scripts/db-compose.mjs ps",
     "db:logs": "node scripts/db-compose.mjs logs",
     "db:check": "node --import tsx server/src/infrastructure/db-check-cli.ts",
+    "db:migrate": "node --import tsx scripts/db-migrate.mjs",
     "prisma:validate": "node --env-file=server/.env node_modules/prisma/build/index.js validate",
     "smoke:providers": "npm run build -w shared && node --import tsx scripts/smoke/cli.ts"
   },

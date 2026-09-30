@@ -1423,3 +1423,82 @@ td {
     padding:8px
   }
 }
+
+.lookup-note {
+  color: #8495aa;
+  font-size: 10px;
+  margin: 12px 0 0;
+}
+.stale-warning {
+  color: #80552b;
+  background: #fff5e7;
+  border: 1px solid #eed7b5;
+  border-radius: 6px;
+  padding: 11px 14px;
+  font-size: 12px;
+}
+.override-mark {
+  display: block;
+  color: #1768c9;
+  font-size: 9px;
+  margin-top: 2px;
+}
+.history-toolbar-live {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.detail-notes textarea,
+.detail-overrides input {
+  display: block;
+  width: 100%;
+  border: 1px solid #d8e2ee;
+  border-radius: 6px;
+  background: #fff;
+  color: #273e5a;
+  padding: 9px 10px;
+  font-size: 11px;
+}
+.detail-notes textarea {
+  resize: vertical;
+  margin-top: 7px;
+}
+.detail-overrides {
+  margin-top: 20px;
+  border-top: 1px solid #edf1f5;
+  padding-top: 16px;
+}
+.detail-overrides > strong {
+  color: #536b87;
+  font-size: 11px;
+}
+.detail-overrides > p,
+.detail-overrides label span {
+  color: #91a1b2;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.detail-overrides label {
+  display: block;
+  margin-top: 12px;
+  color: #5b7390;
+  font-size: 10px;
+  font-weight: 700;
+}
+.detail-overrides label span {
+  display: block;
+  margin: 3px 0 5px;
+  font-weight: 400;
+}
+.detail-save {
+  width: 100%;
+  margin-top: 17px;
+}
+.form-error {
+  color: #aa4c43;
+  font-size: 10px;
+  margin: 12px 0 0;
+}
+@media(max-width:650px) {
+  .history-toolbar-live {
+    grid-template-columns: 1fr;
+  }
+}

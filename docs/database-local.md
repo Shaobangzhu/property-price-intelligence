@@ -32,14 +32,15 @@ Run from the repository root after Docker Desktop starts:
 | `npm run db:up` | Start only PPI PostgreSQL, reusing its named volume |
 | `npm run db:ps` | Show only the PPI PostgreSQL Compose status |
 | `npm run db:check` | Open a short-lived connection, run read-only `SELECT 1`, close the pool |
+| `npm run db:migrate` | Apply tracked forward Prisma migrations to this PPI database only |
 | `npm run db:logs` | Show the last 100 PPI PostgreSQL log lines only; avoid sharing logs without reviewing them |
 | `npm run db:down` | Stop PPI Compose services; preserve the named volume |
 
-The startup order is `npm run db:up`, `npm run db:check`, then `npm run dev`. `db:down` removes the PPI container and network, but **does not delete the volume**. The same volume identity survived a stop/restart check in milestone 01.5. Do not use `down -v` for normal shutdown.
+The startup order is `npm run db:up`, `npm run db:check`, `npm run db:migrate`, then `npm run dev`. `db:down` removes the PPI container and network, but **does not delete the volume**. The same volume identity survived a stop/restart check in milestone 01.5. Do not use `down -v` for normal shutdown.
 
 ## Prisma
 
-Prisma 6.12.0 uses the datasource in `prisma/schema.prisma`. `npm run prisma:validate` checks its syntax without changing the database. Business models, generated client use, and the first migration remain milestone 03 work. No native PostgreSQL server or business table is needed for the current readiness check.
+Prisma 6.12.0 defines `Property` and `DataSnapshot` and tracks forward migrations in `prisma/migrations`. `npm run prisma:validate` checks schema syntax; `npm run db:migrate` applies pending migrations without resetting data. Runtime queries use the existing `pg` pool and target the same schema. No native PostgreSQL server is used.
 
 ## Troubleshooting
 
@@ -49,4 +50,4 @@ Prisma 6.12.0 uses the datasource in `prisma/schema.prisma`. `npm run prisma:val
 - **`DATABASE_URL` is missing or inconsistent:** compare the local root and server configuration privately; correct only the missing or invalid setting and preserve all provider keys. `db:up` checks that the two PPI database configurations agree.
 - **Readiness returns 503:** verify `npm run db:ps` and `npm run db:check`. Liveness can remain 200 while the database is unavailable.
 
-Do not delete the volume as a troubleshooting step. No reset or destructive migration command is part of this milestone.
+Do not delete the volume as a troubleshooting step. No reset or destructive migration command is part of this workflow.

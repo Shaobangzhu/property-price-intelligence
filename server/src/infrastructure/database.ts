@@ -9,5 +9,5 @@ export function createDatabase(connection: string) {
     try { const result = await pool.query('SELECT 1 AS ok'); return result.rows[0]?.ok === 1; }
     catch { return false; }
   };
-  return { check, close: () => pool.end() };
+  return { pool, check, close: () => pool.end() };
 }
