@@ -15,6 +15,47 @@ async function assertCoreMarkers(page: Page) {
   await expect(page.getByRole('button', { name: /Active listing marker: 1804 Synthetic/ })).toBeVisible();
 }
 
+async function showMarketLayers(page: Page) {
+  await page.getByRole('button', { name: 'Recorded Sales', exact: true }).click();
+  await page.getByRole('button', { name: 'Active Listings', exact: true }).click();
+}
+
+test('market layers default off, toggle independently by keyboard, and coexist with exclusive contexts', async ({ page }) => {
+  const mock = await installMockApi(page);
+  await page.goto('/dashboard?mapTestMode=1');
+  await search(page);
+  const sales = page.getByRole('button', { name: 'Recorded Sales', exact: true });
+  const listings = page.getByRole('button', { name: 'Active Listings', exact: true });
+  const legend = page.getByRole('group', { name: 'Visible map layers' });
+  await expect(sales).toHaveAttribute('aria-pressed', 'false');
+  await expect(listings).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: /Recorded sale marker/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Active listing marker/ })).toHaveCount(0);
+  await expect(legend).toHaveText('Map markersSubject Property');
+  await page.getByRole('button', { name: /Select recorded sale 1801 Synthetic/ }).click();
+  await expect(sales).toHaveAttribute('aria-pressed', 'false');
+  await sales.press('Enter');
+  await listings.press('Space');
+  await assertCoreMarkers(page);
+  await sales.click();
+  await expect(page.getByRole('button', { name: /Recorded sale marker/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Active listing marker: 1804/ })).toBeVisible();
+  await expect(legend).not.toContainText('Recorded Sales');
+  for (const context of ['Schools', 'Grocery', 'Wildfire', 'Faults']) {
+    await page.getByRole('button', { name: context, exact: true }).click();
+    await expect(page.getByRole('group', { name: 'Map context' }).locator('[aria-pressed="true"]')).toHaveCount(1);
+    await expect(listings).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: /Active listing marker: 1804/ })).toBeVisible();
+  }
+  await page.getByRole('button', { name: 'Faults', exact: true }).click();
+  await listings.click();
+  await expect(page.getByRole('group', { name: 'Map context' }).locator('[aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.getByRole('img', { name: `Subject property marker: ${DEMO_ADDRESS}` })).toBeVisible();
+  await expect(legend).toHaveText('Map markersSubject Property');
+  await expect(page.getByRole('button', { name: /Select recorded sale 1801 Synthetic/ })).toBeVisible();
+  expect(mock.stats.completedApiRequests.filter(path => path.endsWith('/market-context'))).toHaveLength(1);
+});
+
 test('complete synthetic core workflow: contexts, deterministic Offer and Listing, exact History reopen, and CRUD', async ({ page }) => {
   const mock = await installMockApi(page);
   await test.step('1–3: Dashboard search and persisted subject summary', async () => {
@@ -25,6 +66,7 @@ test('complete synthetic core workflow: contexts, deterministic Offer and Listin
     await expect(page.getByText('2,000 sqft', { exact: true }).first()).toBeVisible();
   });
   await test.step('4–6: recorded sales and bidirectional table/map selection', async () => {
+    await showMarketLayers(page);
     await expect(page.getByRole('columnheader', { name: 'Sold Price' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Asking Price' })).toBeVisible();
     await page.getByRole('button', { name: /Select recorded sale 1801 Synthetic/ }).click();
@@ -120,6 +162,7 @@ test('context and explanation outages preserve deterministic pricing and the cor
   const mock = await installMockApi(page, { contextFailures: true, aiFailure: true });
   await page.goto('/dashboard?mapTestMode=1');
   await search(page);
+  await showMarketLayers(page);
   for (const [layer, message] of [['Schools', 'School request failed'], ['Grocery', 'Grocery unavailable'], ['Wildfire', 'Data unavailable from CAL FIRE.'], ['Faults', 'Data unavailable from California Geological Survey.']]) {
     await page.getByRole('button', { name: layer!, exact: true }).click();
     await expect(page.getByText(message!, { exact: true })).toBeVisible();
@@ -193,13 +236,13 @@ test('late comparable evidence and context responses are discarded when the sele
   await page.goto('/dashboard');
   await search(page);
   await expect(page.getByRole('heading', { name: DEMO_ADDRESS })).toBeVisible();
+  await showMarketLayers(page);
   await expect.poll(() => marketStarted).toBe(true);
   await page.getByRole('button', { name: 'Grocery', exact: true }).click();
   await expect.poll(() => groceryStarted).toBe(true);
   await search(page, SECOND_ADDRESS);
   await expect(page.getByRole('heading', { name: SECOND_ADDRESS })).toBeVisible();
   await expect(page.getByRole('button', { name: /Recorded sale marker: 2801 Synthetic/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Crescent Grocery' })).toBeVisible();
   market.release(); grocery.release();
   await expect.poll(() => mock.stats.completedApiRequests.includes(`/api/properties/${DEMO_ID}/market-context`)).toBe(true);

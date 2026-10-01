@@ -78,6 +78,110 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
 
 describe('Dashboard', () => {
+  it('starts with subject only, keeps independent market toggles, and preserves evidence and pricing', async () => {
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('button', { name: /Select recorded sale 125 Main/ });
+    const sales = screen.getByRole('button', { name: 'Recorded Sales' });
+    const listings = screen.getByRole('button', { name: 'Active Listings' });
+    const legend = screen.getByRole('group', { name: 'Visible map layers' });
+    expect(sales.getAttribute('aria-pressed')).toBe('false');
+    expect(listings.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByRole('button', { name: /Recorded sale marker/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Active listing marker/ })).toBeNull();
+    expect(legend.textContent).toBe('Map markersSubject Property');
+    fireEvent.click(screen.getByRole('button', { name: /Select recorded sale 125 Main/ }));
+    expect(sales.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('row', { name: /125 Main/ }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(sales);
+    expect(screen.getByRole('button', { name: /Recorded sale marker/ }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(listings);
+    expect(screen.getByRole('button', { name: /Active listing marker/ })).toBeTruthy();
+    fireEvent.click(sales);
+    expect(screen.queryByRole('button', { name: /Recorded sale marker/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Active listing marker/ })).toBeTruthy();
+    expect(legend.textContent).not.toContain('Recorded Sales');
+    fireEvent.click(listings);
+    const evidenceCalls = fetchMock.mock.calls.filter(call => String(call[0]).includes('/market-context')).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Offer Price' }));
+    const firstDialog = await screen.findByRole('dialog', { name: 'Offer Price Analysis' });
+    await within(firstDialog).findByText('$410,000');
+    const firstInputs = JSON.parse(String(fetchMock.mock.calls.find(call => String(call[0]).includes('/analyses') && call[1]?.method === 'POST')![1]?.body));
+    fireEvent.click(within(firstDialog).getByRole('button', { name: 'Close dialog' }));
+    fireEvent.click(sales);
+    fireEvent.click(listings);
+    expect(screen.getByRole('button', { name: /Select recorded sale 125 Main/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Select active listing 130 Main/ })).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/market-context'))).toHaveLength(evidenceCalls);
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/analyses') && call[1]?.method === 'POST')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Offer Price' }));
+    const secondDialog = await screen.findByRole('dialog', { name: 'Offer Price Analysis' });
+    await within(secondDialog).findByText('$410,000');
+    const analysisCalls = fetchMock.mock.calls.filter(call => String(call[0]).includes('/analyses') && call[1]?.method === 'POST');
+    const secondInputs = JSON.parse(String(analysisCalls[1]![1]?.body));
+    delete firstInputs.requestKey; delete secondInputs.requestKey;
+    expect(secondInputs).toEqual(firstInputs);
+  });
+
+  it('retains market and context preferences when changing subjects without retaining old graphics', async () => {
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/resolve') && String(init?.body).includes('222 Oak')) return Response.json(makeRecord(secondId, '222 Oak Ave, Austin, TX 78701'));
+      if (url.includes(`${secondId}/market-context`)) {
+        const market = marketResponse(secondId); market.recordedSales.candidates[0]!.id = 'sale-b'; market.recordedSales.candidates[0]!.address = 'Synthetic B Sale';
+        return Response.json(market);
+      }
+      if (url.includes(`${secondId}/assigned-schools`)) return Response.json({ propertyId: secondId, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null });
+      return baseFetch(input, init);
+    });
+    renderAt();
+    const input = screen.getByRole('textbox', { name: 'Search a property address' });
+    fireEvent.change(input, { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Recorded Sales' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Schools' }));
+    await screen.findByText('Assignment unavailable');
+    fireEvent.change(input, { target: { value: '222 Oak Ave, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('button', { name: 'Recorded sale marker: Synthetic B Sale' });
+    await screen.findByText('School assignments not connected');
+    expect(screen.getByRole('button', { name: 'Recorded Sales' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Active Listings' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Schools' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('img', { name: /Subject property marker: 123/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeNull();
+  });
+
+  it.each(['loading', 'empty', 'failed'] as const)('keeps the subject and toggles usable when market evidence is %s', async scenario => {
+    let finish: ((value: Response) => void) | undefined;
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => {
+      if (!String(input).includes('/market-context')) return baseFetch(input, init);
+      if (scenario === 'loading') return new Promise<Response>(resolve => { finish = resolve; });
+      if (scenario === 'failed') return Promise.resolve(Response.json({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'failed', requestId: 'synthetic' } }, { status: 502 }));
+      const empty = marketResponse(); empty.recordedSales.candidates = []; empty.activeListings.candidates = [];
+      return Promise.resolve(Response.json(empty));
+    });
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Recorded Sales' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Active Listings' }));
+    expect(screen.getByRole('img', { name: /Subject property marker/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Recorded sale marker/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Active listing marker/ })).toBeNull();
+    if (scenario === 'loading') {
+      await waitFor(() => expect(finish).toBeDefined());
+      await act(async () => { finish!(Response.json(marketResponse())); });
+      expect(screen.getByRole('button', { name: /Recorded sale marker/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Active listing marker/ })).toBeTruthy();
+    }
+    expect(screen.getByRole('button', { name: 'Recorded Sales' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Active Listings' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('navigates to History and starts with no selected property or fixture prices', async () => {
     renderAt('/');
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy();
@@ -97,6 +201,8 @@ describe('Dashboard', () => {
     expect(screen.getByRole('heading', { name: 'Active Listings' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Sold Price' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Asking Price' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Recorded Sales' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Active Listings' }));
     fireEvent.click(screen.getByRole('button', { name: /Select recorded sale 125 Main/ }));
     expect(screen.getByRole('button', { name: /Recorded sale marker: 125 Main/ }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: /Active listing marker: 130 Main/ }));
@@ -154,6 +260,7 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     const schools = await screen.findByRole('button', { name: 'Schools' });
     const grocery = screen.getByRole('button', { name: 'Grocery' });
+    fireEvent.click(screen.getByRole('button', { name: 'Recorded Sales' }));
     fireEvent.click(schools);
     expect(schools.getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('heading', { name: 'Assigned Schools' })).toBeTruthy();
@@ -184,11 +291,13 @@ describe('Dashboard', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Schools' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Recorded Sales' }));
     const schoolRow = await screen.findByRole('button', { name: 'Select assigned school Oak Elementary' });
     fireEvent.click(schoolRow);
     expect(screen.getByRole('button', { name: 'Assigned school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
     expect(schoolRow.getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('button', { name: /Grocery marker/ })).toBeNull();
+    expect(await screen.findByRole('button', { name: /Recorded sale marker/ })).toBeTruthy();
   });
 
   it.each([
@@ -238,7 +347,7 @@ describe('Dashboard', () => {
     fireEvent.change(input, { target: { value: '222 Oak Ave, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByRole('heading', { name: '222 Oak Ave, Austin, TX 78701' });
-    fireEvent.click(screen.getByRole('button', { name: 'Schools' }));
+    expect(screen.getByRole('button', { name: 'Schools' }).getAttribute('aria-pressed')).toBe('true');
     await screen.findByText('The school-assignment source returned no assignment information for this property.');
     await act(async () => { resolveSchoolA!(Response.json(oldSchools)); });
     expect(screen.queryByText('Synthetic Old School')).toBeNull();
@@ -250,7 +359,8 @@ describe('Dashboard', () => {
     renderAt();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Wildfire' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Recorded Sales' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Wildfire' }));
     await screen.findByText('Subject point intersects a displayed High Fire Hazard Severity Zone.');
     expect(screen.getByText('effective 2024-04-01')).toBeTruthy();
     expect(screen.getAllByTestId('government-overlay')).toHaveLength(2);
@@ -467,7 +577,8 @@ describe('Milestone 09 client hardening', () => {
     await screen.findByRole('heading', { name: '222 Oak Ave, Apt 2, Austin, TX 78701' });
     await act(async () => { finishGrocery?.(Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'late-place', name: 'Late synthetic grocery', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 })); });
     expect(screen.queryByText('Late synthetic grocery')).toBeNull();
-    expect(screen.queryByTestId('government-overlay')).toBeNull();
+    expect(screen.getAllByTestId('government-overlay')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Wildfire' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('img', { name: /Subject property marker: 222 Oak/ })).toBeTruthy();
   });
 

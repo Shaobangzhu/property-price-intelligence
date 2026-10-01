@@ -3,7 +3,7 @@ import type { AnalysisMode, MapContext, MarketContextResponse, PricingPreviewRes
 import { ApiClientError, apiErrorMessage, getAssignedSchools, getFaultContext, getGroceryPlaces, getMarketContext, getWildfireContext, resolveProperty } from '../../api/properties.js';
 import { FeedbackState } from '../../components/FeedbackState.js';
 import { PropertySummary } from './PropertySummary.js';
-import { MapShell } from '../map/MapShell.js';
+import { MapShell, type MarketLayerVisibility } from '../map/MapShell.js';
 import { ContextPanel, type ContextState } from '../map/ContextPanel.js';
 import { getContextMarkers } from '../map/contextMarkers.js';
 import { ComparableTable } from './ComparableTable.js';
@@ -28,6 +28,7 @@ export function DashboardPage() {
   const [state, setState] = useState<'idle' | 'loading' | 'not-found' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [activeContext, setActiveContext] = useState<MapContext | null>(null);
+  const [marketVisibility, setMarketVisibility] = useState<MarketLayerVisibility>({ recordedSales: false, activeListings: false });
   const [market, setMarket] = useState<{ propertyId: string; data: MarketContextResponse | null; status: 'loading' | 'ready' | 'error' } | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [contextState, setContextState] = useState<ContextState | null>(null);
@@ -84,7 +85,7 @@ export function DashboardPage() {
     if (!address) { setState('idle'); setRecord(null); return; }
     const controller = new AbortController();
     request.current.controller = controller;
-    setState('loading'); setMessage(''); setRecord(null); setMarket(null); setSelectedCandidateId(null); setActiveContext(null); setContextState(null); setSelectedContextId(null); setAnalysisMode(null); setPricingResults(null);
+    setState('loading'); setMessage(''); setRecord(null); setMarket(null); setSelectedCandidateId(null); setContextState(null); setSelectedContextId(null); setAnalysisMode(null); setPricingResults(null);
     try {
       const result = await resolveProperty(address, controller.signal);
       if (request.current.id !== id) return;
@@ -109,7 +110,7 @@ export function DashboardPage() {
     </section>
     {state === 'loading' ? <div className="card dashboard-empty"><FeedbackState kind="loading" title="Loading property" message="Checking saved data and, if needed, requesting the property record." /></div> : record ? <>
       {record.cache.cacheStatus === 'STALE_FALLBACK' && <p className="stale-warning" role="alert">Refresh failed. Showing the saved profile as stale; its fetched time has not changed.</p>}
-      <PropertySummary record={record} /><div className="dashboard-grid"><PriceInsights offer={pricingResults?.propertyId === record.property.id ? pricingResults.offer : null} listing={pricingResults?.propertyId === record.property.id ? pricingResults.listing : null} onOpen={setAnalysisMode} /><MapShell subject={record.property} candidates={candidates} selectedId={selectedCandidateId} onSelect={setSelectedCandidateId} activeContext={activeContext} onContextChange={changeContext} contextMarkers={markers} selectedContextId={selectedContextId} onSelectContext={setSelectedContextId} /><ContextPanel activeContext={activeContext} state={currentContext} selectedId={selectedContextId} onSelect={setSelectedContextId} /></div><ComparableTable market={currentMarket} selectedId={selectedCandidateId} onSelect={setSelectedCandidateId} />
+      <PropertySummary record={record} /><div className="dashboard-grid"><PriceInsights offer={pricingResults?.propertyId === record.property.id ? pricingResults.offer : null} listing={pricingResults?.propertyId === record.property.id ? pricingResults.listing : null} onOpen={setAnalysisMode} /><MapShell subject={record.property} candidates={candidates} selectedId={selectedCandidateId} onSelect={setSelectedCandidateId} activeContext={activeContext} onContextChange={changeContext} contextMarkers={markers} selectedContextId={selectedContextId} onSelectContext={setSelectedContextId} marketVisibility={marketVisibility} onMarketVisibilityChange={setMarketVisibility} /><ContextPanel activeContext={activeContext} state={currentContext} selectedId={selectedContextId} onSelect={setSelectedContextId} /></div><ComparableTable market={currentMarket} selectedId={selectedCandidateId} onSelect={setSelectedCandidateId} />
       {analysisMode && <PricingAnalysisDialog key={`${record.property.id}:${analysisMode}`} property={record} mode={analysisMode} onClose={() => setAnalysisMode(null)} onResult={value => setPricingResults(previous => ({ propertyId: record.property.id, offer: analysisMode === 'OFFER' ? value : previous?.propertyId === record.property.id ? previous.offer : null, listing: analysisMode === 'LISTING' ? value : previous?.propertyId === record.property.id ? previous.listing : null }))} />}
     </> : <div className="card dashboard-empty"><FeedbackState kind={state === 'error' || state === 'not-found' ? 'error' : 'empty'} title={state === 'not-found' ? 'Property unavailable' : state === 'error' ? 'Search failed' : 'No property selected'} message={message || 'Enter a full address to find a subject property. No demo records are substituted for live results.'} /></div>}
   </div>;

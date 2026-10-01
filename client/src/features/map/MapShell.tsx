@@ -8,6 +8,8 @@ const contexts: { value: MapContext; label: string }[] = [
   { value: 'wildfire', label: 'Wildfire' }, { value: 'faults', label: 'Faults' }
 ];
 type MapData = { subject: PropertyRecord; candidates: MarketComparableCandidate[]; selectedId: string | null };
+export type MarketLayerVisibility = { recordedSales: boolean; activeListings: boolean };
+const isMarketVisible = (item: MarketComparableCandidate, visibility: MarketLayerVisibility) => item.evidenceType === 'RECORDED_SALE' ? visibility.recordedSales : visibility.activeListings;
 type ContextData = { contextMarkers: ContextMarker[]; selectedContextId: string | null; onSelectContext: (id: string) => void };
 const isTestMode = () => typeof location !== 'undefined' &&
   (import.meta.env.MODE === 'test' ? !new URLSearchParams(location.search).has('mapUnavailableMode') : import.meta.env.DEV && new URLSearchParams(location.search).has('mapTestMode'));
@@ -22,7 +24,7 @@ function reportMapFailure(stage: 'SDK_IMPORT_ERROR' | 'MAPVIEW_INIT_ERROR' | 'BA
   console.warn(`PPI_MAP ${stage}${status ? ` HTTP_${status}` : ''}`);
 }
 
-function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, selectedContextId, onSelectContext, activeContext }: MapData & ContextData & { onSelect: (id: string) => void; activeContext: MapContext | null }) {
+function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, selectedContextId, onSelectContext, activeContext, marketVisibility }: MapData & ContextData & { onSelect: (id: string) => void; activeContext: MapContext | null; marketVisibility: MarketLayerVisibility }) {
   const testMode = isTestMode();
   const container = useRef<HTMLDivElement>(null);
   const data = useRef<MapData>({ subject, candidates, selectedId });
@@ -32,6 +34,8 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
   const redraw = useRef<(() => void) | null>(null);
   const redrawContext = useRef<(() => void) | null>(null);
   const syncGovernment = useRef<((context: MapContext | null) => void) | null>(null);
+  const syncMarket = useRef<(() => void) | null>(null);
+  const marketVisibilityRef = useRef(marketVisibility);
   const activeContextRef = useRef(activeContext);
   const [status, setStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [overlayUnavailable, setOverlayUnavailable] = useState(false);
@@ -40,9 +44,11 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
   contextData.current = { contextMarkers, selectedContextId };
   selectContext.current = onSelectContext;
   activeContextRef.current = activeContext;
+  marketVisibilityRef.current = marketVisibility;
   useEffect(() => { redraw.current?.(); }, [subject, candidates, selectedId]);
   useEffect(() => { redrawContext.current?.(); }, [contextMarkers, selectedContextId]);
   useEffect(() => { setOverlayUnavailable(false); syncGovernment.current?.(activeContext); }, [activeContext]);
+  useEffect(() => { syncMarket.current?.(); }, [marketVisibility.recordedSales, marketVisibility.activeListings]);
 
   useEffect(() => {
     if (testMode) { setStatus('ready'); return; }
@@ -65,11 +71,15 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         esriConfig.log.level = 'none';
         esriConfig.apiKey = key;
         const subjectLayer = new GraphicsLayer({ title: 'Subject Property' });
-        const salesLayer = new GraphicsLayer({ title: 'Recorded Sales' });
-        const listingsLayer = new GraphicsLayer({ title: 'Active Listings' });
+        const salesLayer = new GraphicsLayer({ title: 'Recorded Sales', visible: marketVisibilityRef.current.recordedSales });
+        const listingsLayer = new GraphicsLayer({ title: 'Active Listings', visible: marketVisibilityRef.current.activeListings });
+        syncMarket.current = () => {
+          salesLayer.visible = marketVisibilityRef.current.recordedSales;
+          listingsLayer.visible = marketVisibilityRef.current.activeListings;
+        };
         const contextLayer = new GraphicsLayer({ title: 'Selected Context' });
         const wildfireLayer = new GraphicsLayer({ title: 'CAL FIRE Fire Hazard Severity Zones', opacity: 0.55 });
-        const map = new Map({ basemap: 'arcgis/light-gray', layers: [wildfireLayer, subjectLayer, salesLayer, listingsLayer, contextLayer] });
+        const map = new Map({ basemap: 'arcgis/light-gray', layers: [wildfireLayer, salesLayer, listingsLayer, contextLayer, subjectLayer] });
         let governmentLayers: InstanceType<typeof import('@arcgis/core/layers/FeatureLayer.js').default>[] = [];
         let governmentRevision = 0;
         let wildfireQueryRevision = 0;
@@ -158,14 +168,14 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         drawContext();
         const click = view.on('click', event => {
           const clickedContext = activeContextRef.current;
-          void view.hitTest(event, { include: [contextLayer, salesLayer, listingsLayer] }).then(result => {
+          void view.hitTest(event, { include: [contextLayer, ...[salesLayer, listingsLayer].filter(layer => layer.visible)] }).then(result => {
             if (disposed) return;
             const graphic = result.results.find(hit => 'graphic' in hit)?.graphic;
             const id = graphic?.attributes?.id;
             if (typeof id === 'string') {
               if (graphic?.attributes?.context === true) {
                 if (clickedContext === activeContextRef.current && contextData.current.contextMarkers.some(marker => marker.id === id)) selectContext.current(id);
-              } else if (data.current.candidates.some(candidate => candidate.id === id)) select.current(id);
+              } else if (data.current.candidates.some(candidate => candidate.id === id && isMarketVisible(candidate, marketVisibilityRef.current))) select.current(id);
             }
           }).catch(() => {});
         });
@@ -177,7 +187,7 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
             layerFailed = true; if (!disposed) setStatus('unavailable');
           }
         });
-        destroy = () => { click.remove(); layerError.remove(); stationary.remove(); governmentRevision++; wildfireQueryRevision++; wildfireAbort?.abort(); syncGovernment.current = null; redraw.current = null; redrawContext.current = null; for (const layer of governmentLayers) if (!map.layers.includes(layer)) layer.destroy(); view.destroy(); };
+        destroy = () => { click.remove(); layerError.remove(); stationary.remove(); governmentRevision++; wildfireQueryRevision++; wildfireAbort?.abort(); syncGovernment.current = null; syncMarket.current = null; redraw.current = null; redrawContext.current = null; for (const layer of governmentLayers) if (!map.layers.includes(layer)) layer.destroy(); view.destroy(); };
         await Promise.all([
           view.when().catch(error => { report('MAPVIEW_INIT_ERROR', error); throw error; }),
           map.basemap?.loadAll().catch(error => { report('BASEMAP_LOAD_ERROR', error); throw error; })
@@ -186,20 +196,21 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         if (!disposed && !layerFailed) setStatus('ready');
       } catch (error) { if (!disposed) { if (!reported) reportMapFailure(stage, error); setStatus('unavailable'); } }
     })();
-    return () => { disposed = true; destroy?.(); syncGovernment.current = null; redraw.current = null; redrawContext.current = null; };
+    return () => { disposed = true; destroy?.(); syncGovernment.current = null; syncMarket.current = null; redraw.current = null; redrawContext.current = null; };
   }, []);
 
-  if (testMode) return <div className="map-test-mode" aria-label="Map test mode"><span role="img" aria-label={`Subject property marker: ${subject.formattedAddress}`}>Subject Property</span>{governmentLayerSpecs(activeContext).map(spec => <span key={spec.url} data-testid="government-overlay">{spec.title}</span>)}{candidates.filter(item => item.latitude !== null && item.longitude !== null).map(item =>
+  if (testMode) return <div className="map-test-mode" aria-label="Map test mode"><span role="img" aria-label={`Subject property marker: ${subject.formattedAddress}`}>Subject Property</span>{governmentLayerSpecs(activeContext).map(spec => <span key={spec.url} data-testid="government-overlay">{spec.title}</span>)}{candidates.filter(item => isMarketVisible(item, marketVisibility) && item.latitude !== null && item.longitude !== null).map(item =>
     <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}>{item.evidenceType === 'RECORDED_SALE' ? 'Recorded sale marker' : 'Active listing marker'}: {item.address}</button>)}{contextMarkers.map(marker =>
     <button type="button" key={`context:${marker.id}`} aria-pressed={selectedContextId === marker.id} onClick={() => onSelectContext(marker.id)}>{marker.kind === 'school' ? 'Assigned school marker' : 'Grocery marker'}: {marker.label}</button>)}</div>;
   return <div className="map-canvas arcgis-canvas" aria-label="ArcGIS property map"><div ref={container} className="arcgis-view" />{status !== 'ready' && <div className="map-fallback" role="status">{status === 'loading' ? 'Loading ArcGIS map…' : 'Map unavailable. Property and market evidence remain available.'}</div>}{overlayUnavailable && status === 'ready' && <div className="map-overlay-notice" role="status">Selected government map overlay unavailable. Property markers remain visible.</div>}</div>;
 }
 
-export function MapShell({ subject, candidates, selectedId, onSelect, activeContext, onContextChange, contextMarkers, selectedContextId, onSelectContext }: MapData & ContextData & { onSelect: (id: string) => void; activeContext: MapContext | null; onContextChange: (context: MapContext | null) => void }) {
+export function MapShell({ subject, candidates, selectedId, onSelect, activeContext, onContextChange, contextMarkers, selectedContextId, onSelectContext, marketVisibility, onMarketVisibilityChange }: MapData & ContextData & { onSelect: (id: string) => void; activeContext: MapContext | null; onContextChange: (context: MapContext | null) => void; marketVisibility: MarketLayerVisibility; onMarketVisibilityChange: (visibility: MarketLayerVisibility) => void }) {
   return <section className="card map-card" aria-labelledby="map-title"><div className="card-heading map-heading"><div><span className="eyebrow">Location context</span><h2 id="map-title">Property map</h2></div><span className="section-tag">ArcGIS</span></div>
-    <div className="map-context-picker" role="group" aria-label="Map context"><span className="map-context-label">Context layers</span><div className="context-buttons">{contexts.map(context => <button type="button" key={context.value} className={`context-button${activeContext === context.value ? ' is-active' : ''}`} aria-pressed={activeContext === context.value} onClick={() => onContextChange(activeContext === context.value ? null : context.value)}>{context.label}</button>)}</div></div>
-    <ArcgisMap subject={subject} candidates={candidates} selectedId={selectedId} onSelect={onSelect} contextMarkers={contextMarkers} selectedContextId={selectedContextId} onSelectContext={onSelectContext} activeContext={activeContext} />
-    <div className="map-legend"><span className="legend-label">Map markers</span><span><i className="legend-dot subject-dot"/>Subject Property</span><span><i className="legend-dot comp-dot"/>Recorded Sales</span><span><i className="legend-dot listing-dot"/>Active Listings</span>{activeContext === 'schools' && <span><i className="legend-dot school-dot"/>Assigned Schools</span>}{activeContext === 'grocery' && <span><i className="legend-dot grocery-dot"/>Grocery</span>}{activeContext === 'wildfire' && <span><i className="legend-dot wildfire-dot"/>Fire Hazard Severity Zones</span>}{activeContext === 'faults' && <span><i className="legend-line fault-line"/>Mapped Fault Traces</span>}</div>
+    <div className="map-context-picker" role="group" aria-label="Market layers"><span className="map-context-label">Market layers</span><div className="context-buttons">{([['recordedSales', 'Recorded Sales'], ['activeListings', 'Active Listings']] as const).map(([key, label]) => <button type="button" key={key} className={`context-button${marketVisibility[key] ? ' is-active' : ''}`} aria-pressed={marketVisibility[key]} onClick={() => onMarketVisibilityChange({ ...marketVisibility, [key]: !marketVisibility[key] })}>{marketVisibility[key] && <span aria-hidden="true">✓ </span>}{label}</button>)}</div></div>
+    <div className="map-context-picker" role="group" aria-label="Map context"><span className="map-context-label">Context layers</span><div className="context-buttons">{contexts.map(context => <button type="button" key={context.value} className={`context-button${activeContext === context.value ? ' is-active' : ''}`} aria-pressed={activeContext === context.value} onClick={() => onContextChange(activeContext === context.value ? null : context.value)}>{activeContext === context.value && <span aria-hidden="true">✓ </span>}{context.label}</button>)}</div></div>
+    <ArcgisMap subject={subject} candidates={candidates} selectedId={selectedId} onSelect={onSelect} contextMarkers={contextMarkers} selectedContextId={selectedContextId} onSelectContext={onSelectContext} activeContext={activeContext} marketVisibility={marketVisibility} />
+    <div className="map-legend" role="group" aria-label="Visible map layers"><span className="legend-label">Map markers</span><span><i className="legend-dot subject-dot"/>Subject Property</span>{marketVisibility.recordedSales && <span><i className="legend-dot comp-dot"/>Recorded Sales</span>}{marketVisibility.activeListings && <span><i className="legend-dot listing-dot"/>Active Listings</span>}{activeContext === 'schools' && <span><i className="legend-dot school-dot"/>Assigned Schools</span>}{activeContext === 'grocery' && <span><i className="legend-dot grocery-dot"/>Grocery</span>}{activeContext === 'wildfire' && <span><i className="legend-dot wildfire-dot"/>Fire Hazard Severity Zones</span>}{activeContext === 'faults' && <span><i className="legend-line fault-line"/>Mapped Fault Traces</span>}</div>
     <p className="map-selection-note">Select a row or marker to inspect a candidate. Context results appear only for the selected layer.</p>
   </section>;
 }
