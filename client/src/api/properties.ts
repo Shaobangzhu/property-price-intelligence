@@ -64,6 +64,7 @@ export async function deleteProperty(id: string): Promise<void> {
 export function apiErrorMessage(error: unknown): string {
   if (error instanceof ApiClientError) {
     const messages: Record<string, string> = {
+      REQUEST_ORIGIN_NOT_ALLOWED: 'This browser address is not allowed by the local PPI server. Check the configured app port and restart the server after configuration changes.',
       PROPERTY_NOT_FOUND: 'No exact property record matched this address.',
       AMBIGUOUS_PROPERTY: 'More than one property matched. Include the full address and unit.',
       RENTCAST_API_KEY_MISSING: 'RENTCAST_API_KEY is missing on the server.',

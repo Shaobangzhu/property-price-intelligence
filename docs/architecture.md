@@ -12,6 +12,8 @@ The service waits for the remote response before opening a database transaction.
 
 Milestone 09 adds token-aware checks around the legacy concatenated address key. A collision returns `PROPERTY_IDENTITY_CONFLICT` instead of overwriting another subject. Refresh requires its original property ID to still exist; deleting a subject while its provider request is pending cannot recreate it. Pricing captures one validated subject envelope before requesting comparable evidence for that same subject. Untrusted browser Origins and cross-site requests without an Origin are rejected before provider routes. No-Origin CLI requests remain supported for local development.
 
+Local origin configuration expands each validated origin to both `localhost` and `127.0.0.1` at the same scheme and port. This supports the Vite bind address and existing localhost configuration without changing user-owned env files. The request guard and CORS middleware receive the same expanded list. Other ports, remote domains, deceptive localhost subdomains, and opaque `null` origins remain forbidden.
+
 ## Data ownership and freshness
 
 `Property` stores provider-normalized fields, subject-only identity, user notes, and JSONB override entries. A stable RentCast ID is preferred where available; a normalized full address including unit is also unique. `DataSnapshot` stores a sanitized normalized payload, hashes, `fetchedAt`, and `expiresAt`; its `PROPERTY_PROFILE` TTL is 14 days. `Property.updatedAt` records edits but never determines provider freshness. A failed refresh leaves the snapshot and fetched time unchanged and sets `refreshFailedAt`, so future reads show stale state until a successful provider fetch clears the marker. `STALE_FALLBACK` is explicit in resolve/refresh responses.

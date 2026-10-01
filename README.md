@@ -49,7 +49,7 @@ No verified production school-assignment provider is connected. Schools correctl
 
 PPI reaches Docker PostgreSQL through `127.0.0.1:55435`, mapped to container port 5432. The `ppi-local` Compose project keeps data in the named `ppi-local_ppi_pgdata` volume. No CPI, PSGI, DGI, or native PostgreSQL service needs to be started for PPI.
 
-Open `http://localhost:5173`. API listens at `127.0.0.1:3001`; Vite proxies `/api` there. Vite uses strict port 5173. If it conflicts, resolve the conflict or deliberately update frontend origin, CORS, and ArcGIS basemap referrer restrictions before changing ports.
+Open `http://127.0.0.1:5173` or `http://localhost:5173`. API listens at `127.0.0.1:3001`; Vite proxies `/api` there. For each configured `ALLOWED_ORIGINS` port, the server accepts both loopback spellings without editing the local env file; other ports and external origins remain blocked. Vite uses strict port 5173. If it conflicts, resolve the conflict or deliberately update frontend origin, CORS, and ArcGIS basemap referrer restrictions before changing ports. Basemap referrer permissions are managed separately from the PPI API's origin checks.
 
 ## Property workflow
 

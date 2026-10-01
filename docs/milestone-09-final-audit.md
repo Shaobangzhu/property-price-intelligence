@@ -125,3 +125,11 @@ README now describes the actual saved-analysis product, stack, sources, Docker s
 Remaining limits: no verified school-assignment source; live entitlement/coverage not reverified; California-specific informational GIS; approximate fault distance; simple pricing rules not statistically validated; conservative but incomplete natural-language claim validation; legacy address-key conflicts safely rejected; sizable ArcGIS bundles; local single-user prototype security only. These limits are visible/documented and do not block the prepared local core demonstration.
 
 Stop at Milestone 09. Deployment and Controlled Agent Evidence Expansion require their own briefs.
+
+## Follow-up correction — local search 403
+
+The user reported Search returning 403 from `http://127.0.0.1:5173`. The new origin guard compared exact origins, while the existing allowed origin used `localhost`. Earlier mocked browser tests bypassed the server, and the API tests covered only the localhost spelling, so this integration mismatch escaped the initial audit.
+
+Reproduced through the running Vite proxy with an empty address (no provider calls or writes): localhost reached input validation with `400 INVALID_INPUT`, while 127.0.0.1 returned `403 REQUEST_ORIGIN_NOT_ALLOWED`. Configuration now expands a validated loopback origin to both spellings on exactly the configured port, shared by admission and CORS. Local env files remain unchanged. The client also explains origin rejection instead of showing only a generic search failure.
+
+After the fix, both loopback origins reached input validation on the running app; port 5174 and an external origin still returned 403. Regression tests verify successful mocked search POSTs and preflight responses for both origins, preservation of configured values, and rejection of wrong ports/deceptive domains/null origins. Follow-up checks: **146 tests passed** (5 database tests remain separately gated); lint, typecheck, and build passed. The existing ArcGIS chunk-size warning remains. No live provider search was used to validate this correction.

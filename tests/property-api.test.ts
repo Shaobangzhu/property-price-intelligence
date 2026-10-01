@@ -7,6 +7,7 @@ import type { AssignedSchoolsService } from '../server/src/context/schools.js';
 import type { GroceryContextService } from '../server/src/context/grocery.js';
 import type { HazardContextService } from '../server/src/context/hazards.js';
 import type { PricingPreviewService } from '../server/src/pricing/service.js';
+import { parseServerConfig } from '../server/src/config/env.js';
 
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 function setup() {
@@ -23,13 +24,14 @@ function setup() {
   const groceryService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_RESULTS', places: [], source: 'ARCGIS_PLACES', radiusMeters: 1600 }) };
   const hazardService = { getWildfire: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_COVERAGE' }), getFaults: vi.fn().mockResolvedValue({ propertyId: id, contextType: 'FAULT_TRACE', status: 'NO_NEARBY_FEATURES' }) };
   const pricingService = { preview: vi.fn().mockResolvedValue({ status: 'INSUFFICIENT_EVIDENCE', engineVersion: 'ppi-pricing-v1', referencePrice: null }) };
-  const app = createApp({ checkDatabase: async () => true, origins: ['http://localhost:5173'], propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService, pricingService: pricingService as unknown as PricingPreviewService });
+  const app = createApp({ checkDatabase: async () => true, origins: parseServerConfig({ ALLOWED_ORIGINS: 'http://localhost:5173' }).origins, propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService, pricingService: pricingService as unknown as PricingPreviewService });
   return { app, service, marketService, schoolsService, groceryService, hazardService, pricingService };
 }
 
 describe('property REST routes', () => {
   it.each([
-    ['https://untrusted.example', 'cross-site'], ['http://localhost:5174', 'same-site'], ['null', 'cross-site'],
+    ['https://untrusted.example', 'cross-site'], ['http://localhost:5174', 'same-site'], ['http://127.0.0.1:5174', 'same-site'],
+    ['http://localhost.untrusted.example:5173', 'cross-site'], ['null', 'cross-site'],
     [null, 'cross-site'], [null, 'same-site']
   ])('blocks untrusted browser requests before provider work (%s, %s)', async (origin, fetchSite) => {
     const { app, service, groceryService } = setup();
@@ -51,6 +53,19 @@ describe('property REST routes', () => {
     expect((await request(app).get(path).set('Sec-Fetch-Site', 'same-origin')).status).toBe(200);
     expect((await request(app).get(path)).status).toBe(200);
     expect(groceryService.get).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['http://localhost:5173', 'http://127.0.0.1:5173'])('allows search POST and CORS preflight from %s', async origin => {
+    const { app, service } = setup();
+    const response = await request(app).post('/api/properties/resolve').set('Origin', origin).set('Sec-Fetch-Site', 'same-origin')
+      .send({ address: '123 Main St, Austin, TX 78701' });
+    expect(response.status).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBe(origin);
+    expect(service.resolve).toHaveBeenCalledOnce();
+    const preflight = await request(app).options('/api/properties/resolve').set('Origin', origin)
+      .set('Access-Control-Request-Method', 'POST').set('Access-Control-Request-Headers', 'content-type');
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers['access-control-allow-origin']).toBe(origin);
   });
 
   it('validates input and keeps provider-owned fields out of PATCH', async () => {

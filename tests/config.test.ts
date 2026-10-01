@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig, parseServerConfig, assertLocalDatabase } from '../server/src/config/env.js';
 
 describe('configuration', () => {
+  it('accepts both loopback spellings only on configured ports without changing the configured value', () => {
+    const values = { ALLOWED_ORIGINS: 'http://localhost:5173' };
+    expect(parseServerConfig(values).origins).toEqual(['http://localhost:5173', 'http://127.0.0.1:5173']);
+    expect(parseServerConfig(values).ALLOWED_ORIGINS).toBe(values.ALLOWED_ORIGINS);
+    expect(values).toEqual({ ALLOWED_ORIGINS: 'http://localhost:5173' });
+    expect(parseConfig({ ALLOWED_ORIGINS: 'http://127.0.0.1:5173' }).origins).toEqual(['http://127.0.0.1:5173', 'http://localhost:5173']);
+    expect(parseServerConfig({ ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173' }).origins).toHaveLength(2);
+    expect(parseServerConfig({ ALLOWED_ORIGINS: 'http://localhost:4173' }).origins).toEqual(['http://localhost:4173', 'http://127.0.0.1:4173']);
+    expect(parseServerConfig({}).origins).not.toContain('http://localhost:5174');
+  });
   it('parses false and true explicitly', () => {
     expect(parseConfig({ ALLOW_LIVE_API_TESTS: 'false' }).ALLOW_LIVE_API_TESTS).toBe(false);
     expect(parseConfig({ ALLOW_LIVE_API_TESTS: 'true' }).ALLOW_LIVE_API_TESTS).toBe(true);
@@ -18,6 +28,8 @@ describe('configuration', () => {
     try { parseConfig({ DATABASE_URL: canary }); } catch (error) { expect(String(error)).not.toContain(canary); }
     expect(() => parseConfig({ ALLOWED_ORIGINS: 'javascript:bad' })).toThrow('ALLOWED_ORIGINS');
     expect(() => parseConfig({ ALLOWED_ORIGINS: 'https://remote.example' })).toThrow('ALLOWED_ORIGINS');
+    expect(() => parseConfig({ ALLOWED_ORIGINS: 'http://localhost.untrusted.example:5173' })).toThrow('ALLOWED_ORIGINS');
+    expect(() => parseConfig({ ALLOWED_ORIGINS: 'null' })).toThrow('ALLOWED_ORIGINS');
     expect(() => parseConfig({ SMOKE_TEST_LATITUDE: '91', SMOKE_TEST_LONGITUDE: '1' })).toThrow('SMOKE_TEST_LATITUDE');
     expect(() => parseConfig({ PORT: '70000' })).toThrow('PORT');
   });

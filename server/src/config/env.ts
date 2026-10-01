@@ -34,7 +34,15 @@ function validateBase(data: Pick<AppConfig, 'ALLOWED_ORIGINS' | 'DATABASE_URL'>)
   const origins = data.ALLOWED_ORIGINS.split(',').map(v => v.trim());
   if (!origins.length || origins.some(origin => { try { const url = new URL(origin); return url.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(url.hostname) || url.origin !== origin; } catch { return true; } })) throw new Error('Invalid configuration: ALLOWED_ORIGINS');
   if (data.DATABASE_URL) assertLocalDatabase(data.DATABASE_URL);
-  return origins;
+  // Vite binds to 127.0.0.1, while existing local configuration uses localhost.
+  // Trust both loopback spellings only for each explicitly configured scheme/port.
+  // Keep the user-owned env value unchanged and retain the same origin list for
+  // request admission and CORS response headers.
+  return [...new Set(origins.flatMap(origin => {
+    const alias = new URL(origin);
+    alias.hostname = alias.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    return [origin, alias.origin];
+  }))];
 }
 
 export function parseServerConfig(values: NodeJS.ProcessEnv): ServerConfig {
