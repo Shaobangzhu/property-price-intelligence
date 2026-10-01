@@ -64,9 +64,11 @@ export function DashboardPage() {
       return { ...empty, faults: await getFaultContext(propertyId, controller.signal) };
     };
     void load().then(data => {
+      if (controller.signal.aborted) return;
       const responseId = data.schools?.propertyId ?? data.grocery?.propertyId ?? data.wildfire?.propertyId ?? data.faults?.propertyId;
-      if (!controller.signal.aborted && responseId === propertyId) setContextState({ propertyId, context, status: 'ready', ...data });
-    }).catch(() => { if (!controller.signal.aborted) setContextState({ propertyId, context, status: 'error', ...empty }); });
+      if (responseId !== propertyId) throw new ApiClientError('CONTEXT_PROPERTY_MISMATCH', 502);
+      setContextState({ propertyId, context, status: 'ready', ...data });
+    }).catch(error => { if (!controller.signal.aborted) setContextState({ propertyId, context, status: 'error', errorCode: error instanceof ApiClientError ? error.code : 'REQUEST_FAILED', ...empty }); });
     return () => controller.abort();
   }, [record?.property.id, activeContext]);
 

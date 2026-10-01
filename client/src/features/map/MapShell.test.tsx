@@ -22,7 +22,7 @@ vi.mock('@arcgis/core/layers/FeatureLayer.js', () => ({ default: class {
 } }));
 vi.mock('@arcgis/core/Map.js', () => ({ default: class {
   layers: Layer[];
-  basemap = { loadAll: () => sdk.basemapFailure ? Promise.reject(new Error('synthetic outage')) : Promise.resolve() };
+  basemap = { loadAll: () => sdk.basemapFailure ? Promise.reject(new Error('synthetic token=DO_NOT_PRINT 498')) : Promise.resolve() };
   constructor(value: { layers: Layer[] }) { this.layers = value.layers; }
   add(layer: Layer) { this.layers.push(layer); }
   remove(layer: Layer) { this.layers = this.layers.filter(value => value !== layer); }
@@ -89,8 +89,11 @@ it('ignores a late hit test for context graphics that have been removed', async 
 
 it('shows a safe map fallback when basemap loading fails and cleans up its view', async () => {
   sdk.basemapFailure = true;
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const view = render(<MapShell {...props} />);
   await screen.findByText('Map unavailable. Property and market evidence remain available.');
+  expect(warning).toHaveBeenCalledWith('PPI_MAP BASEMAP_LOAD_ERROR HTTP_498');
+  expect(JSON.stringify(warning.mock.calls)).not.toContain('DO_NOT_PRINT');
   view.unmount();
   expect(sdk.views[0]?.destroy).toHaveBeenCalledOnce();
 });

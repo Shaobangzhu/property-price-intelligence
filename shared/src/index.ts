@@ -106,9 +106,11 @@ export const AssignedSchool = z.object({
 });
 export type AssignedSchool = z.infer<typeof AssignedSchool>;
 export const AssignedSchoolsResponse = z.object({
-  propertyId: PropertyId, status: z.enum(['ASSIGNMENT_UNAVAILABLE', 'AVAILABLE', 'PARTIAL', 'UNMATCHED', 'PROVIDER_ERROR']),
+  propertyId: PropertyId, status: z.enum(['SOURCE_UNAVAILABLE', 'ASSIGNMENT_UNAVAILABLE', 'AVAILABLE', 'PARTIAL', 'UNMATCHED', 'PROVIDER_ERROR']),
   schools: z.array(AssignedSchool), assignmentSource: z.string().nullable()
-});
+}).refine(value => ['AVAILABLE', 'PARTIAL', 'UNMATCHED'].includes(value.status)
+  ? value.schools.length > 0 && !!value.assignmentSource?.trim()
+  : value.schools.length === 0, 'School status and records must agree');
 export type AssignedSchoolsResponse = z.infer<typeof AssignedSchoolsResponse>;
 
 export const GroceryPlace = z.object({

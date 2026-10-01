@@ -1,7 +1,7 @@
 import type { AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MapContext, WildfireContextResponse } from '@ppi/shared';
 import { FeedbackState } from '../../components/FeedbackState.js';
 
-export type ContextState = { propertyId: string; context: MapContext; status: 'loading' | 'ready' | 'error'; schools: AssignedSchoolsResponse | null; grocery: GroceryResponse | null; wildfire: WildfireContextResponse | null; faults: FaultContextResponse | null };
+export type ContextState = { propertyId: string; context: MapContext; status: 'loading' | 'ready' | 'error'; errorCode?: string; schools: AssignedSchoolsResponse | null; grocery: GroceryResponse | null; wildfire: WildfireContextResponse | null; faults: FaultContextResponse | null };
 const titles: Record<MapContext, string> = { schools: 'Assigned Schools', grocery: 'Grocery nearby', wildfire: 'Wildfire Context', faults: 'Earthquake Fault Context' };
 const levels = ['ELEMENTARY', 'MIDDLE', 'HIGH', 'OTHER'] as const;
 
@@ -10,9 +10,12 @@ export function ContextPanel({ activeContext, state, selectedId, onSelect }: { a
   return <aside className="card context-card" aria-labelledby="context-panel-title"><div className="card-heading"><div><span className="eyebrow">Selected layer</span><h2 id="context-panel-title">{activeContext ? titles[activeContext] : 'Context details'}</h2></div><span className="section-tag">{activeContext ? 'On demand' : 'Context'}</span></div>
     {!activeContext && <FeedbackState kind="empty" title="No context selected" message="Choose one context layer to see its availability. All layers can be off." compact />}
     {activeContext && (!current || current.status === 'loading') && <FeedbackState kind="loading" title="Loading context" message="Checking availability for this property." compact />}
-    {activeContext && current?.status === 'error' && <FeedbackState kind="error" title="Context unavailable" message="The context request failed. Select the layer again to retry." compact />}
-    {activeContext === 'schools' && current?.status === 'ready' && current.schools && (current.schools.status === 'ASSIGNMENT_UNAVAILABLE' || current.schools.status === 'PROVIDER_ERROR') &&
-      <FeedbackState kind="empty" title="Assignment unavailable" message="Assigned school information is unavailable for this property." compact />}
+    {activeContext && current?.status === 'error' && (activeContext === 'schools' ? <SchoolRequestError code={current.errorCode} /> : <FeedbackState kind="error" title="Context unavailable" message="The context request failed. Select the layer again to retry." compact />)}
+    {activeContext === 'schools' && current?.status === 'ready' && current.schools?.status === 'SOURCE_UNAVAILABLE' &&
+      <FeedbackState kind="empty" title="School assignments not connected" message="A verified school-assignment source is not connected. This does not mean the property has no assigned schools." compact />}
+    {activeContext === 'schools' && current?.status === 'ready' && current.schools?.status === 'ASSIGNMENT_UNAVAILABLE' &&
+      <FeedbackState kind="empty" title="Assignment unavailable" message="The school-assignment source returned no assignment information for this property." compact />}
+    {activeContext === 'schools' && current?.status === 'ready' && current.schools?.status === 'PROVIDER_ERROR' && <SchoolRequestError />}
     {activeContext === 'schools' && current?.status === 'ready' && current.schools && current.schools.schools.length > 0 && <div className="context-results">
       <p className="context-source">Assignments: {current.schools.assignmentSource}. Only verified assignments appear here.</p>
       {current.schools.status === 'UNMATCHED' && <p className="context-source">School locations could not be matched; no school markers are shown.</p>}
@@ -23,6 +26,12 @@ export function ContextPanel({ activeContext, state, selectedId, onSelect }: { a
     {activeContext === 'wildfire' && current?.status === 'ready' && current.wildfire && <WildfireResults data={current.wildfire} />}
     {activeContext === 'faults' && current?.status === 'ready' && current.faults && <FaultResults data={current.faults} />}
   </aside>;
+}
+
+function SchoolRequestError({ code }: { code?: string }) {
+  const malformed = code === 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED' || code === 'SCHOOL_ASSIGNMENT_RESPONSE_INVALID' || code === 'CONTEXT_PROPERTY_MISMATCH';
+  return <FeedbackState kind="error" title={malformed ? 'School response invalid' : 'School request failed'}
+    message={malformed ? 'School information could not be read safely. Select Schools again to retry.' : 'The school request failed. Select Schools again to retry.'} compact />;
 }
 
 const disclaimer = 'Map context is informational and is not an engineering, insurance, or hazard assessment.';

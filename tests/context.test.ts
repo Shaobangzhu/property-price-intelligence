@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import request from 'supertest';
+import { AssignedSchoolsResponse } from '@ppi/shared';
+import { createApp } from '../server/src/app.js';
+import type { PropertyService } from '../server/src/properties/service.js';
 import type { PropertyRepository, StoredRecord } from '../server/src/properties/repository.js';
 import { AssignedSchoolsService, UnavailableAssignmentSource, matchSchool, type SchoolReference, type VerifiedAssignment } from '../server/src/context/schools.js';
 import { ArcGisPlacesProvider, GroceryContextService, PlacesError, normalizeGroceryPlaces, parseGroceryPolicy, resolveGroceryCategoryIds } from '../server/src/context/grocery.js';
@@ -16,7 +20,21 @@ describe('assigned school boundary', () => {
   it('shows unavailable when there is no verified assignment source, even with a nearby reference', async () => {
     const refs = { lookup: vi.fn(async () => [reference]) };
     const service = new AssignedSchoolsService(repository(), new UnavailableAssignmentSource(), refs);
-    expect(await service.get(id)).toEqual({ propertyId: id, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null });
+    expect(await service.get(id)).toEqual({ propertyId: id, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null });
+    expect(refs.lookup).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [] }])('reserves assignment unavailable for a successful empty result', async result => {
+    const service = new AssignedSchoolsService(repository(), { get: async () => result });
+    expect((await service.get(id)).status).toBe('ASSIGNMENT_UNAVAILABLE');
+  });
+
+  it.each([undefined, {}, [], { source: '', schools: [assignment] }, { source: 'SYNTHETIC', schools: {} },
+    { source: 'SYNTHETIC', schools: [null] }, { source: 'SYNTHETIC', schools: [{ ...assignment, name: '' }] },
+    { source: 'SYNTHETIC', schools: [{ ...assignment, latitude: 180 }] }])('rejects malformed assignment results before enrichment', async result => {
+    const refs = { lookup: vi.fn() };
+    const service = new AssignedSchoolsService(repository(), { get: async () => result }, refs);
+    await expect(service.get(id)).rejects.toMatchObject({ code: 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED', status: 502 });
     expect(refs.lookup).not.toHaveBeenCalled();
   });
 
@@ -45,12 +63,38 @@ describe('assigned school boundary', () => {
 
   it('degrades assignment-source failure and keeps verified identities when enrichment fails', async () => {
     const unavailable = new AssignedSchoolsService(repository(), { get: async () => { throw new Error('offline'); } });
-    expect(await unavailable.get(id)).toEqual({ propertyId: id, status: 'PROVIDER_ERROR', schools: [], assignmentSource: null });
+    await expect(unavailable.get(id)).rejects.toMatchObject({ code: 'SCHOOL_ASSIGNMENT_PROVIDER_ERROR', status: 502 });
     const partial = new AssignedSchoolsService(repository(), { get: async () => ({ source: 'VERIFIED_PROVIDER', schools: [assignment] }) },
       { lookup: async () => { throw new Error('offline'); } });
     const result = await partial.get(id);
     expect(result.status).toBe('UNMATCHED');
     expect(result.schools[0]).toMatchObject({ name: assignment.name, assignmentSource: 'VERIFIED_PROVIDER', latitude: null, longitude: null });
+  });
+
+  it('preserves verified schools through HTTP serialization and the shared response schema', async () => {
+    const repo = repository();
+    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
+      schoolsService: new AssignedSchoolsService(repo, { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [assignment] }) }, { lookup: async () => [reference] }) });
+    const response = await request(app).get(`/api/properties/${id}/assigned-schools`);
+    expect(response.status).toBe(200);
+    expect(AssignedSchoolsResponse.parse(response.body)).toMatchObject({ propertyId: id, status: 'AVAILABLE',
+      schools: [{ name: assignment.name, sourceSchoolId: assignment.sourceSchoolId, latitude: reference.latitude }] });
+    expect(repo.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it.each(['failure', 'malformed'] as const)('returns an observable sanitized 502 for %s', async scenario => {
+    const log = vi.fn();
+    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService, log,
+      schoolsService: new AssignedSchoolsService(repository(), { get: async () => {
+        if (scenario === 'failure') throw new Error('synthetic-secret-do-not-log');
+        return { source: 'synthetic-secret-do-not-log', schools: 'invalid' };
+      } }) });
+    const response = await request(app).get(`/api/properties/${id}/assigned-schools`);
+    const code = scenario === 'failure' ? 'SCHOOL_ASSIGNMENT_PROVIDER_ERROR' : 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED';
+    expect(response.status).toBe(502);
+    expect(response.body.error).toMatchObject({ code, requestId: expect.any(String) });
+    expect(log).toHaveBeenCalledWith({ code, requestId: response.body.error.requestId });
+    expect(JSON.stringify([response.body, log.mock.calls])).not.toContain('synthetic-secret-do-not-log');
   });
 });
 

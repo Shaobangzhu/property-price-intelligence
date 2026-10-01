@@ -1,24 +1,32 @@
 import { createHash } from 'node:crypto';
-import { AssignedSchool, type AssignedSchoolsResponse } from '@ppi/shared';
+import { z } from 'zod';
+import { AssignedSchool, AssignmentLevel, type AssignedSchoolsResponse } from '@ppi/shared';
 import type { PropertyRepository, StoredProperty } from '../properties/repository.js';
 import { PropertyError } from '../properties/service.js';
 import { distanceMiles } from '../market/provider.js';
 
-export type VerifiedAssignment = {
-  assignmentLevel: 'ELEMENTARY' | 'MIDDLE' | 'HIGH' | 'OTHER'; sourceSchoolId: string | null;
-  name: string; district: string | null; city: string | null;
-  latitude: number | null; longitude: number | null; grades: string | null; schoolType: string | null;
-};
+const text = z.string().trim().min(1).max(250);
+const VerifiedAssignment = z.object({
+  assignmentLevel: AssignmentLevel, sourceSchoolId: text.nullable(),
+  name: text, district: text.nullable(), city: text.nullable(),
+  latitude: z.number().finite().min(-90).max(90).nullable(), longitude: z.number().finite().min(-180).max(180).nullable(),
+  grades: text.nullable(), schoolType: text.nullable()
+});
+export type VerifiedAssignment = z.infer<typeof VerifiedAssignment>;
+// This is the internal verified-source adapter contract, not a RentCast schema.
+const AssignmentResult = z.object({ source: text, schools: z.array(VerifiedAssignment).max(100) }).nullable();
 export type SchoolReference = { sourceId: string; name: string; district: string | null; city: string | null;
   latitude: number | null; longitude: number | null; grades: string | null; schoolType: string | null; source: string };
 export interface VerifiedAssignmentSource {
-  get(subject: StoredProperty): Promise<{ source: string; schools: VerifiedAssignment[] } | null>;
+  get(subject: StoredProperty): Promise<unknown>;
 }
 export interface SchoolReferenceSource { lookup(assignments: VerifiedAssignment[]): Promise<SchoolReference[]>; }
 
-// No verified RentCast assignment contract is documented or observed. Production must stay unavailable.
+class AssignmentSourceUnavailable extends Error {}
+
+// No verified assignment adapter is connected. This is not an empty provider result.
 export class UnavailableAssignmentSource implements VerifiedAssignmentSource {
-  async get(): Promise<null> { return null; }
+  async get(): Promise<never> { throw new AssignmentSourceUnavailable(); }
 }
 
 const normalize = (value: string | null) => value?.toLowerCase().normalize('NFKD').replace(/\p{Diacritic}/gu, '').replace(/[^a-z0-9]/g, '') ?? '';
@@ -42,9 +50,15 @@ export class AssignedSchoolsService {
   async get(propertyId: string): Promise<AssignedSchoolsResponse> {
     const record = await this.properties.findById(propertyId);
     if (!record) throw new PropertyError('PROPERTY_NOT_FOUND', 404);
-    let result: Awaited<ReturnType<VerifiedAssignmentSource['get']>>;
-    try { result = await this.assignments.get(record.property); }
-    catch { return { propertyId, status: 'PROVIDER_ERROR', schools: [], assignmentSource: null }; }
+    let raw: unknown;
+    try { raw = await this.assignments.get(record.property); }
+    catch (error) {
+      if (error instanceof AssignmentSourceUnavailable) return { propertyId, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null };
+      throw new PropertyError('SCHOOL_ASSIGNMENT_PROVIDER_ERROR', 502);
+    }
+    const parsed = AssignmentResult.safeParse(raw);
+    if (!parsed.success) throw new PropertyError('SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED', 502);
+    const result = parsed.data;
     if (!result) return { propertyId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null };
     let references: SchoolReference[] = [];
     if (this.references) {

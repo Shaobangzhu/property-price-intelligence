@@ -20,7 +20,18 @@ export function resolveProperty(address: string, signal?: AbortSignal) {
 }
 export function getProperty(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}`, PropertyEnvelope, { signal }); }
 export function getMarketContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/market-context`, MarketContextResponse, { signal }); }
-export function getAssignedSchools(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/assigned-schools`, AssignedSchoolsResponse, { signal }); }
+export async function getAssignedSchools(id: string, signal?: AbortSignal) {
+  try {
+    return await request(`/properties/${encodeURIComponent(id)}/assigned-schools`, { parse(value: unknown) {
+      const parsed = AssignedSchoolsResponse.safeParse(value);
+      if (!parsed.success) throw new ApiClientError('SCHOOL_ASSIGNMENT_RESPONSE_INVALID', 502);
+      return parsed.data;
+    } }, { signal });
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new ApiClientError('SCHOOL_ASSIGNMENT_RESPONSE_INVALID', 502);
+    throw error;
+  }
+}
 export function getGroceryPlaces(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/nearby-places?category=grocery`, GroceryResponse, { signal, cache: 'no-store' }); }
 export function getWildfireContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/wildfire-context`, WildfireContextResponse, { signal }); }
 export function getFaultContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/fault-context`, FaultContextResponse, { signal }); }

@@ -34,7 +34,7 @@ test('complete synthetic core workflow: contexts, deterministic Offer and Listin
   });
   await test.step('7–11: all four exclusive contexts preserve core markers', async () => {
     await page.getByRole('button', { name: 'Schools', exact: true }).click();
-    await expect(page.getByText('Assigned school information is unavailable for this property.')).toBeVisible();
+    await expect(page.getByText('The school-assignment source returned no assignment information for this property.')).toBeVisible();
     await page.getByRole('button', { name: 'Grocery', exact: true }).click();
     await page.getByRole('button', { name: 'Grocery marker: Synthetic Demo Grocery' }).click();
     await expect(page.getByRole('button', { name: 'Select grocery Synthetic Demo Grocery' })).toHaveAttribute('aria-pressed', 'true');
@@ -120,7 +120,7 @@ test('context and explanation outages preserve deterministic pricing and the cor
   const mock = await installMockApi(page, { contextFailures: true, aiFailure: true });
   await page.goto('/dashboard?mapTestMode=1');
   await search(page);
-  for (const [layer, message] of [['Schools', 'Assigned school information is unavailable for this property.'], ['Grocery', 'Grocery unavailable'], ['Wildfire', 'Data unavailable from CAL FIRE.'], ['Faults', 'Data unavailable from California Geological Survey.']]) {
+  for (const [layer, message] of [['Schools', 'School request failed'], ['Grocery', 'Grocery unavailable'], ['Wildfire', 'Data unavailable from CAL FIRE.'], ['Faults', 'Data unavailable from California Geological Survey.']]) {
     await page.getByRole('button', { name: layer!, exact: true }).click();
     await expect(page.getByText(message!, { exact: true })).toBeVisible();
     await assertCoreMarkers(page);

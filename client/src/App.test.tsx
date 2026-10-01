@@ -6,6 +6,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { calculatePricing, type AnalysisRun, type PricingInput, type PropertyEnvelope } from '@ppi/shared';
 import { App } from './App.js';
 import { PricingAnalysisDialog } from './features/pricing/PricingAnalysisDialog.js';
+import { AssignedSchoolsService } from '../../server/src/context/schools.js';
+import type { PropertyRepository } from '../../server/src/properties/repository.js';
 
 const firstId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const secondId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -155,7 +157,7 @@ describe('Dashboard', () => {
     fireEvent.click(schools);
     expect(schools.getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('heading', { name: 'Assigned Schools' })).toBeTruthy();
-    await screen.findByText('Assigned school information is unavailable for this property.');
+    await screen.findByText('The school-assignment source returned no assignment information for this property.');
     expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
     fireEvent.click(grocery);
     expect(schools.getAttribute('aria-pressed')).toBe('false');
@@ -171,9 +173,12 @@ describe('Dashboard', () => {
   });
 
   it('synchronizes verified assigned-school list and marker selection without using nearby schools', async () => {
+    // Synthetic internal adapter fixture; RentCast does not document this schema.
+    const schools = await new AssignedSchoolsService({ findById: async () => ({ property: makeRecord().property, snapshot: null }) } as unknown as PropertyRepository,
+      { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [{ assignmentLevel: 'ELEMENTARY', sourceSchoolId: 'one', name: 'Oak Elementary', district: 'Austin ISD', city: 'Austin', latitude: 30.11, longitude: -97.11, grades: 'K–5', schoolType: 'Public' }] }) }).get(firstId);
     const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
     fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => String(input).includes('/assigned-schools')
-      ? Promise.resolve(Response.json({ propertyId: firstId, status: 'AVAILABLE', assignmentSource: 'VERIFIED_PROVIDER', schools: [{ id: 'school:one', assignmentLevel: 'ELEMENTARY', sourceSchoolId: 'one', name: 'Oak Elementary', district: 'Austin ISD', city: 'Austin', latitude: 30.11, longitude: -97.11, grades: 'K–5', schoolType: 'Public', distanceMiles: 0.9, assignmentSource: 'VERIFIED_PROVIDER', metadataSource: 'REFERENCE', matchStatus: 'EXACT_ID' }] }))
+      ? Promise.resolve(Response.json(schools))
       : baseFetch(input, init));
     renderAt();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
@@ -184,6 +189,61 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: 'Assigned school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
     expect(schoolRow.getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('button', { name: /Grocery marker/ })).toBeNull();
+  });
+
+  it.each([
+    ['source missing', () => Response.json({ propertyId: firstId, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null }), 'School assignments not connected'],
+    ['legacy provider failure', () => Response.json({ propertyId: firstId, status: 'PROVIDER_ERROR', schools: [], assignmentSource: null }), 'School request failed'],
+    ['upstream failure', () => Response.json({ error: { code: 'SCHOOL_ASSIGNMENT_PROVIDER_ERROR', message: 'failed', requestId: 'synthetic' } }, { status: 502 }), 'School request failed'],
+    ['upstream malformed', () => Response.json({ error: { code: 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED', message: 'invalid', requestId: 'synthetic' } }, { status: 502 }), 'School response invalid'],
+    ['API schema mismatch', () => Response.json({ propertyId: firstId, status: 'AVAILABLE', schools: {} }), 'School response invalid'],
+    ['inconsistent empty success', () => Response.json({ propertyId: firstId, status: 'AVAILABLE', schools: [], assignmentSource: 'SYNTHETIC' }), 'School response invalid'],
+    ['invalid JSON', () => new Response('{'), 'School response invalid'],
+    ['wrong property', () => Response.json({ propertyId: secondId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null }), 'School response invalid'],
+    ['network failure', () => { throw new TypeError('offline'); }, 'School request failed']
+  ] as const)('distinguishes %s from a successful empty school result', async (_scenario, response, title) => {
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation(async (input: string | URL, init?: RequestInit) => String(input).includes('/assigned-schools') ? response() : baseFetch(input, init));
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const schools = await screen.findByRole('button', { name: 'Schools' });
+    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/assigned-schools'))).toBe(false);
+    fireEvent.click(schools);
+    await screen.findByText(title);
+    expect(screen.queryByText('Assignment unavailable')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
+  });
+
+  it('shows school loading and ignores a late school response after switching properties', async () => {
+    let resolveSchoolA: ((value: Response) => void) | undefined;
+    const source = { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [{ assignmentLevel: 'HIGH', sourceSchoolId: 'late', name: 'Synthetic Old School', district: null, city: null, latitude: 30.11, longitude: -97.11, grades: null, schoolType: null }] }) };
+    const oldSchools = await new AssignedSchoolsService({ findById: async () => ({ property: makeRecord().property, snapshot: null }) } as unknown as PropertyRepository, source).get(firstId);
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`${firstId}/assigned-schools`)) return new Promise<Response>(resolve => { resolveSchoolA = resolve; });
+      if (url.includes(`${secondId}/assigned-schools`)) return Promise.resolve(Response.json({ propertyId: secondId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: 'SYNTHETIC_VERIFIED_ADAPTER' }));
+      if (url.endsWith('/resolve') && String(init?.body).includes('222 Oak')) return Promise.resolve(Response.json(makeRecord(secondId, '222 Oak Ave, Austin, TX 78701')));
+      if (url.includes(`${secondId}/market-context`)) return Promise.resolve(Response.json(marketResponse(secondId)));
+      return baseFetch(input, init);
+    });
+    renderAt();
+    const input = screen.getByRole('textbox', { name: 'Search a property address' });
+    fireEvent.change(input, { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Schools' }));
+    await screen.findByText('Loading context');
+    await waitFor(() => expect(resolveSchoolA).toBeDefined());
+    fireEvent.change(input, { target: { value: '222 Oak Ave, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('heading', { name: '222 Oak Ave, Austin, TX 78701' });
+    fireEvent.click(screen.getByRole('button', { name: 'Schools' }));
+    await screen.findByText('The school-assignment source returned no assignment information for this property.');
+    await act(async () => { resolveSchoolA!(Response.json(oldSchools)); });
+    expect(screen.queryByText('Synthetic Old School')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
+    expect(screen.getByText('Assignment unavailable')).toBeTruthy();
   });
 
   it('switches official wildfire polygons and fault traces while retaining core candidates', async () => {

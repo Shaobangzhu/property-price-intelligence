@@ -3,7 +3,7 @@ import type { AssignedSchoolsResponse, GroceryResponse, MapContext } from '@ppi/
 export type ContextMarker = { id: string; label: string; detail: string; latitude: number; longitude: number; kind: 'school' | 'grocery' };
 
 export function getContextMarkers(context: MapContext | null, schools: AssignedSchoolsResponse | null, grocery: GroceryResponse | null): ContextMarker[] {
-  if (context === 'schools') return (schools && schools.status !== 'ASSIGNMENT_UNAVAILABLE' && schools.status !== 'PROVIDER_ERROR' ? schools.schools : []).flatMap(school => school.latitude === null || school.longitude === null ? [] : [{
+  if (context === 'schools') return (schools && ['AVAILABLE', 'PARTIAL', 'UNMATCHED'].includes(schools.status) ? schools.schools : []).flatMap(school => school.latitude === null || school.longitude === null ? [] : [{
     id: school.id, label: school.name, detail: `${school.assignmentLevel.toLowerCase()} assignment · ${school.district ?? 'District unavailable'}`,
     latitude: school.latitude, longitude: school.longitude, kind: 'school' as const
   }]);

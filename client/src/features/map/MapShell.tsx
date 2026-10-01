@@ -12,6 +12,16 @@ type ContextData = { contextMarkers: ContextMarker[]; selectedContextId: string 
 const isTestMode = () => typeof location !== 'undefined' &&
   (import.meta.env.MODE === 'test' ? !new URLSearchParams(location.search).has('mapUnavailableMode') : import.meta.env.DEV && new URLSearchParams(location.search).has('mapTestMode'));
 
+function reportMapFailure(stage: 'SDK_IMPORT_ERROR' | 'MAPVIEW_INIT_ERROR' | 'BASEMAP_LOAD_ERROR', error: unknown) {
+  if (!import.meta.env.DEV) return;
+  const candidate = error && typeof error === 'object' ? error as { message?: unknown; status?: unknown; details?: { httpStatus?: unknown; status?: unknown } } : null;
+  const text = typeof candidate?.message === 'string' ? candidate.message : '';
+  const status = [candidate?.status, candidate?.details?.httpStatus, candidate?.details?.status]
+    .find(value => typeof value === 'number' && Number.isInteger(value)) ?? text.match(/\b(?:401|403|404|498|499|500)\b/)?.[0];
+  // ArcGIS error messages and URLs may contain tokens; emit only a fixed stage and status.
+  console.warn(`PPI_MAP ${stage}${status ? ` HTTP_${status}` : ''}`);
+}
+
 function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, selectedContextId, onSelectContext, activeContext }: MapData & ContextData & { onSelect: (id: string) => void; activeContext: MapContext | null }) {
   const testMode = isTestMode();
   const container = useRef<HTMLDivElement>(null);
@@ -41,12 +51,16 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
     let disposed = false;
     let destroy: (() => void) | null = null;
     void (async () => {
+      let stage: 'SDK_IMPORT_ERROR' | 'MAPVIEW_INIT_ERROR' = 'SDK_IMPORT_ERROR';
+      let reported = false;
+      const report = (kind: 'MAPVIEW_INIT_ERROR' | 'BASEMAP_LOAD_ERROR', error: unknown) => { reported = true; if (!disposed) reportMapFailure(kind, error); };
       try {
         const [{ default: esriConfig }, { default: Map }, { default: MapView }, { default: GraphicsLayer }, { default: Graphic }] = await Promise.all([
           import('@arcgis/core/config.js'), import('@arcgis/core/Map.js'), import('@arcgis/core/views/MapView.js'),
           import('@arcgis/core/layers/GraphicsLayer.js'), import('@arcgis/core/Graphic.js')
         ]);
         if (disposed || !container.current) return;
+        stage = 'MAPVIEW_INIT_ERROR';
         // ArcGIS error details may contain the browser token; show our redacted fallback instead.
         esriConfig.log.level = 'none';
         esriConfig.apiKey = key;
@@ -164,10 +178,13 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
           }
         });
         destroy = () => { click.remove(); layerError.remove(); stationary.remove(); governmentRevision++; wildfireQueryRevision++; wildfireAbort?.abort(); syncGovernment.current = null; redraw.current = null; redrawContext.current = null; for (const layer of governmentLayers) if (!map.layers.includes(layer)) layer.destroy(); view.destroy(); };
-        await Promise.all([view.when(), map.basemap?.loadAll()]);
+        await Promise.all([
+          view.when().catch(error => { report('MAPVIEW_INIT_ERROR', error); throw error; }),
+          map.basemap?.loadAll().catch(error => { report('BASEMAP_LOAD_ERROR', error); throw error; })
+        ]);
         if (activeContextRef.current === 'wildfire') void loadWildfire(governmentRevision);
         if (!disposed && !layerFailed) setStatus('ready');
-      } catch { if (!disposed) setStatus('unavailable'); }
+      } catch (error) { if (!disposed) { if (!reported) reportMapFailure(stage, error); setStatus('unavailable'); } }
     })();
     return () => { disposed = true; destroy?.(); syncGovernment.current = null; redraw.current = null; redrawContext.current = null; };
   }, []);
