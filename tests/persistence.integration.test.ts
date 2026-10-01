@@ -95,6 +95,37 @@ describe.skipIf(!enabled)('PostgreSQL property workflow in an isolated test sche
     expect((await pool.query('SELECT COUNT(*)::int AS count FROM "DataSnapshot"')).rows[0]?.count).toBe(0);
   });
 
+  it('does not recreate a property deleted while its refresh is waiting for the provider', async () => {
+    const search = vi.fn(async () => [profile]);
+    const service = new PropertyService(repository, { name: 'RENTCAST', search });
+    const created = await service.resolve(address);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    search.mockImplementationOnce(async () => { await pending; return [profile]; });
+    const refreshing = service.refresh(created.property.id);
+    const rejected = expect(refreshing).rejects.toMatchObject({ code: 'PROPERTY_NOT_FOUND', status: 404 });
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    await service.delete(created.property.id);
+    release();
+    await rejected;
+    expect((await service.list({ page: 1, pageSize: 5, search: '' })).total).toBe(0);
+    expect((await pool.query('SELECT COUNT(*)::int AS count FROM "DataSnapshot"')).rows[0]?.count).toBe(0);
+  });
+
+  it('refuses an address-key collision without overwriting the stored subject', async () => {
+    const first = { ...profile, providerPropertyId: 'collision-first', unit: null, addressLine1: '1 23rd St', formattedAddress: '1 23rd St, Austin, TX 78701' };
+    const second = { ...first, providerPropertyId: 'collision-second', addressLine1: '12 3rd St', formattedAddress: '12 3rd St, Austin, TX 78701' };
+    const service = new PropertyService(repository, { name: 'RENTCAST', search: async address => address === first.formattedAddress ? [first] : [second] });
+    const results = await Promise.allSettled([service.resolve(first.formattedAddress), service.resolve(second.formattedAddress)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'PROPERTY_IDENTITY_CONFLICT' } });
+    expect((await service.list({ page: 1, pageSize: 5, search: '' })).total).toBe(1);
+    for (const result of results) if (result.status === 'fulfilled') {
+      expect((await service.get(result.value.property.id)).property.formattedAddress).toBe(result.value.property.formattedAddress);
+      await service.delete(result.value.property.id);
+    }
+  });
+
   it('saves versioned analyses and frozen engine results without modifying refreshed property data', async () => {
     const propertyService = new PropertyService(repository, { name: 'RENTCAST', search: async () => [profile] });
     const created = await propertyService.resolve(address);
@@ -122,6 +153,29 @@ describe.skipIf(!enabled)('PostgreSQL property workflow in an isolated test sche
     expect((await analyses.get(claimed.run.id))?.engineResult.referencePrice).toBe(claimed.run.engineResult.referencePrice);
     expect(((await analyses.get(claimed.run.id))?.inputSnapshot as PricingInput).subject.livingAreaSqft).toBe(1200);
     expect((await analyses.list(created.property.id)).total).toBe(2);
+    const summary = await analyses.listSummaries(created.property.id, 1, 1);
+    expect(summary.total).toBe(2);
+    expect(summary.items).toHaveLength(1);
+    expect(summary.items[0]).not.toHaveProperty('inputSnapshot');
+    expect(summary.items[0]).not.toHaveProperty('engineResult');
+    expect(summary.items[0]?.suggestedPrice).toBe(renewed.run.engineResult.offerResult?.suggestedPrice);
+    expect((await analyses.listSummaries(created.property.id, 2, 1)).items[0]?.id).toBe(claimed.run.id);
+    await pool.query(`UPDATE "AnalysisRun" SET "createdAt"=CURRENT_TIMESTAMP - INTERVAL '60 seconds' WHERE "id"=$1`, [renewed.run.id]);
+    const interrupted = await analyses.claim({ ...runInput, requestKey: '33333333-3333-4333-8333-333333333333' }, false);
+    expect(interrupted.claimed).toBe(false);
+    expect(interrupted.run.failureCode).toBe('INTERRUPTED');
+    expect((await analyses.get(renewed.run.id))?.status).toBe('FAILED');
+    const concurrentKey = '44444444-4444-4444-8444-444444444444';
+    const simultaneous = await Promise.allSettled([
+      analyses.claim({ ...runInput, inputHash: 'c'.repeat(64), requestKey: concurrentKey }, true),
+      analyses.claim({ ...runInput, inputHash: 'd'.repeat(64), requestKey: concurrentKey }, true)
+    ]);
+    expect(simultaneous.filter(item => item.status === 'fulfilled')).toHaveLength(1);
+    const conflict = simultaneous.find(item => item.status === 'rejected');
+    expect(conflict?.status === 'rejected' ? conflict.reason.code : null).toBe('REQUEST_KEY_CONFLICT');
+    const activeId = simultaneous.flatMap(item => item.status === 'fulfilled' ? [item.value.run.id] : [])[0]!;
+    await pool.query(`UPDATE "AnalysisRun" SET "createdAt"=CURRENT_TIMESTAMP - INTERVAL '60 seconds' WHERE "id"=$1`, [activeId]);
+    expect((await analyses.get(activeId))?.failureCode).toBe('INTERRUPTED');
     await propertyService.delete(created.property.id);
     expect((await analyses.list(created.property.id)).total).toBe(0);
   });

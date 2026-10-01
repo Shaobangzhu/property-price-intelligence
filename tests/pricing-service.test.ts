@@ -26,7 +26,7 @@ describe('pricing preview service', () => {
       cacheStatus: 'HIT', fetchedAt: now, expiresAt: '2026-10-06T00:00:00.000Z', query: { ...query, saleDateRangeDays: kind === 'RECORDED_SALES' ? 365 : null }, errorCode: null });
     const properties = { get: vi.fn().mockResolvedValue(property) } as unknown as PropertyService;
     const marketGet = vi.fn().mockResolvedValue({ propertyId: id, recordedSales: group('RECORDED_SALES'), activeListings: group('ACTIVE_LISTINGS') });
-    const market = { get: marketGet } as unknown as MarketEvidenceService;
+    const market = { getForSubject: marketGet } as unknown as MarketEvidenceService;
     const service = new PricingPreviewService(properties, market, () => new Date(now));
     const result = await service.preview(id, { mode: 'OFFER', strategyProfile: 'BALANCED' });
     expect(result.status).toBe('READY');
@@ -39,7 +39,16 @@ describe('pricing preview service', () => {
     expect(result.activeListingContext[0]?.reasonCode).toBe('ACTIVE_ASK_CONTEXT_ONLY');
     expect(result.includedComparables).toHaveLength(3);
     expect(properties.get).toHaveBeenCalledWith(id);
-    expect(market.get).toHaveBeenCalledWith(id);
+    expect(market.getForSubject).toHaveBeenCalledWith(property.property);
+    marketGet.mockImplementationOnce(async subject => {
+      // Simulate a refresh replacing current provider facts while comps load.
+      property.property.latitude = 31;
+      property.property.effectiveValues.livingAreaSqft = 1600;
+      expect(subject.latitude).toBe(30.1);
+      return { propertyId: id, recordedSales: group('RECORDED_SALES'), activeListings: group('ACTIVE_LISTINGS') };
+    });
+    const frozen = await service.prepareInput(id, { mode: 'OFFER', strategyProfile: 'BALANCED' });
+    expect(frozen.subject.livingAreaSqft).toBe(1000);
     marketGet.mockResolvedValueOnce({ propertyId: id, recordedSales: { ...group('RECORDED_SALES'), candidates: [group('ACTIVE_LISTINGS').candidates[0]] }, activeListings: group('ACTIVE_LISTINGS') });
     await expect(service.preview(id, { mode: 'OFFER', strategyProfile: 'BALANCED' })).rejects.toMatchObject({ code: 'INVALID_MARKET_EVIDENCE' });
   });

@@ -9,9 +9,10 @@ export class PricingPreviewService {
     private readonly now: () => Date = () => new Date()) {}
 
   async prepareInput(propertyId: string, request: PricingPreviewRequest): Promise<PricingInput> {
-    const [propertyEnvelope, marketContext] = await Promise.all([this.properties.get(propertyId), this.market.get(propertyId)]);
-    const property = PropertyEnvelope.parse(propertyEnvelope);
-    const market = MarketContextResponse.parse(marketContext);
+    // Freeze subject values and coordinates together before loading evidence. A
+    // concurrent profile refresh must not mix new coordinates with old facts.
+    const property = PropertyEnvelope.parse(await this.properties.get(propertyId));
+    const market = MarketContextResponse.parse(await this.market.getForSubject(property.property));
     const subject = property.property;
     if (subject.id !== propertyId || market.propertyId !== propertyId ||
       market.recordedSales.candidates.some(candidate => candidate.evidenceType !== 'RECORDED_SALE') ||

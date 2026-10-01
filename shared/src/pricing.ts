@@ -71,8 +71,11 @@ const normalizedType = (value: string | null): string | null => {
 };
 const weightedQuantile = (rows: IncludedComparable[], fraction: number, value: (row: IncludedComparable) => number): number => {
   const sorted = [...rows].sort((a, b) => value(a) - value(b) || a.candidateId.localeCompare(b.candidateId));
+  // Rounded display proportions can move an exact percentile boundary. Use the
+  // same raw weights for the cumulative sum and its threshold.
+  const threshold = rows.reduce((sum, row) => sum + row.rawWeight, 0) * fraction;
   let cumulative = 0;
-  for (const row of sorted) { cumulative += row.normalizedWeight; if (cumulative + 1e-12 >= fraction) return value(row); }
+  for (const row of sorted) { cumulative += row.rawWeight; if (cumulative + 1e-12 >= threshold) return value(row); }
   return value(sorted[sorted.length - 1]!);
 };
 const range = (low: number, high: number): [number, number] => [roundMoney(low), roundMoney(high)];
@@ -143,7 +146,7 @@ export function calculatePricing(input: PricingInput, config: Readonly<PricingCo
     eligible.push({ candidateId: candidate.id, reasonCode: 'INCLUDED', soldPrice: candidate.price!, pricePerSqft: candidate.price! / candidate.livingAreaSqft!,
       ageDays, distanceMiles: distance, sqftRatio: roundFactor(ratio),
       factors: { distance: roundFactor(distanceFactor), recency: roundFactor(recencyFactor), sizeSimilarity: roundFactor(sizeFactor) },
-      rawWeight: roundFactor(rawWeight), normalizedWeight: 0,
+      rawWeight, normalizedWeight: 0,
       missingOptionalFields: Number(candidate.bedrooms === null) + Number(candidate.bathrooms === null) });
   }
   if (eligible.length >= 4) {

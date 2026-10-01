@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { PropertyPatchInput } from '@ppi/shared';
-import { normalizeAddressKey } from '../server/src/properties/address.js';
+import { addressMatches, normalizeAddressKey } from '../server/src/properties/address.js';
 import { normalizeRentCastResponse, ProviderError, type NormalizedProviderProperty, type PropertyDataProvider } from '../server/src/properties/provider.js';
 import { PropertyError, PropertyService, parseProfileTtlDays } from '../server/src/properties/service.js';
 import type { PropertyRepository, SaveProfile, StoredProperty, StoredRecord, StoredSnapshot } from '../server/src/properties/repository.js';
@@ -23,7 +23,9 @@ class MemoryRepository implements PropertyRepository {
     return { items: all.slice((page - 1) * pageSize, page * pageSize), total: all.length, page, pageSize };
   };
   saveProfile = async (input: SaveProfile) => {
+    if (input.expectedPropertyId && !this.records.has(input.expectedPropertyId)) throw new Error('PROPERTY_NOT_FOUND');
     const prior = [...this.records.values()].find(item => item.property.providerPropertyId === input.profile.providerPropertyId || item.property.normalizedAddressKey === input.normalizedAddressKey);
+    if (prior && !addressMatches(input.profile.formattedAddress, prior.property)) throw new Error('PROPERTY_IDENTITY_CONFLICT');
     const property: StoredProperty = prior ? { ...prior.property, ...input.profile, normalizedAddressKey: input.normalizedAddressKey, updatedAt: input.fetchedAt } : {
       ...input.profile, id: randomUUID(), normalizedAddressKey: input.normalizedAddressKey, refreshFailedAt: null, notes: null, userOverrides: {}, createdAt: input.fetchedAt, updatedAt: input.fetchedAt
     };
@@ -139,6 +141,38 @@ describe('property resolution and persistence rules', () => {
     expect(repository.snapshots[0]?.normalizedPayload.livingAreaSqft).toBe(1200);
   });
 
+  it.each([false, true])('does not restore a deleted subject after a pending refresh (provider fails: %s)', async failed => {
+    const { service, search, repository } = setup();
+    const created = await service.resolve(address);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    search.mockImplementationOnce(async () => { await pending; if (failed) throw new ProviderError('UPSTREAM'); return [profile]; });
+    const refreshing = service.refresh(created.property.id);
+    const rejected = expect(refreshing).rejects.toMatchObject({ code: 'PROPERTY_NOT_FOUND', status: 404 });
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    await service.delete(created.property.id);
+    release();
+    await rejected;
+    expect(repository.records.size).toBe(0);
+    expect(repository.snapshots).toHaveLength(0);
+  });
+
+  it('preserves edits made while a failed refresh is pending', async () => {
+    const { service, search } = setup();
+    const created = await service.resolve(address);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    search.mockImplementationOnce(async () => { await pending; throw new ProviderError('UPSTREAM'); });
+    const refreshing = service.refresh(created.property.id);
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    await service.patch(created.property.id, { notes: 'Retain this edit', overrides: { livingAreaSqft: 1300 } });
+    release();
+    const fallback = await refreshing;
+    expect(fallback.property.notes).toBe('Retain this edit');
+    expect(fallback.property.effectiveValues.livingAreaSqft).toBe(1300);
+    expect(fallback.cache.fetchedAt).toBe(created.cache.fetchedAt);
+  });
+
   it('preserves apartment identity and refuses an ambiguous provider match', async () => {
     const { service, search } = setup();
     expect(normalizeAddressKey(address)).not.toBe(normalizeAddressKey('123 Main St, Apt 3, Austin, TX 78701'));
@@ -148,6 +182,20 @@ describe('property resolution and persistence rules', () => {
     await expect(service.resolve(address)).rejects.toMatchObject({ code: 'PROPERTY_NOT_FOUND' });
     search.mockResolvedValueOnce([profile, { ...profile, providerPropertyId: 'rentcast-apt-3', unit: 'Apt 3', formattedAddress: '123 Main St, Apt 3, Austin, TX 78701' }]);
     await expect(service.resolve('123 Main St, Austin, TX 78701')).rejects.toMatchObject({ code: 'AMBIGUOUS_PROPERTY' });
+  });
+
+  it('does not confuse distinct addresses whose legacy lookup keys collide', async () => {
+    const { service, search, repository } = setup();
+    const first = { ...profile, providerPropertyId: 'first', unit: null, addressLine1: '1 23rd St', formattedAddress: '1 23rd St, Austin, TX 78701' };
+    const second = { ...first, providerPropertyId: 'second', addressLine1: '12 3rd St', formattedAddress: '12 3rd St, Austin, TX 78701' };
+    expect(normalizeAddressKey(first.formattedAddress)).toBe(normalizeAddressKey(second.formattedAddress));
+    search.mockImplementation(async address => address === first.formattedAddress ? [first] : [second]);
+    const results = await Promise.allSettled([service.resolve(first.formattedAddress), service.resolve(second.formattedAddress)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'PROPERTY_IDENTITY_CONFLICT' } });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(repository.records.size).toBe(1);
+    await expect(service.resolve(second.formattedAddress)).rejects.toMatchObject({ code: 'PROPERTY_IDENTITY_CONFLICT' });
   });
 
   it('rejects malformed provider responses and never includes owner data in normalized profiles', () => {

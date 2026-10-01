@@ -10,9 +10,9 @@ function stable(value: unknown): string {
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(',')}}`;
   return JSON.stringify(value);
 }
-export function analysisHash(input: PricingInput, model: string, effort = 'low'): string {
-  return createHash('sha256').update(stable({ input, model, effort, promptVersion: PROMPT_VERSION,
-    engineVersion: 'ppi-pricing-v1' })).digest('hex');
+export function analysisHash(input: PricingInput, engineResult: PricingPreviewResponse, model: string, effort = 'low'): string {
+  return createHash('sha256').update(stable({ input, engineResult, model, effort, promptVersion: PROMPT_VERSION,
+    engineVersion: engineResult.engineVersion })).digest('hex');
 }
 
 export class AnalysisService {
@@ -26,7 +26,7 @@ export class AnalysisService {
     const engine = PricingPreviewResponse.parse(calculatePricing(input));
     return this.run({ propertyId, mode: request.mode, strategyProfile: request.strategyProfile,
       engineVersion: engine.engineVersion, promptVersion: PROMPT_VERSION, model: this.model, reasoningEffort: this.effort,
-      userInputs: request, inputSnapshot: input, engineResult: engine, inputHash: analysisHash(input, this.model, this.effort), requestKey }, false);
+      userInputs: request, inputSnapshot: input, engineResult: engine, inputHash: analysisHash(input, engine, this.model, this.effort), requestKey }, false);
   }
 
   async regenerate(id: string, requestKey: string) {
@@ -36,7 +36,7 @@ export class AnalysisService {
     return this.run({ propertyId: original.propertyId, mode: original.mode, strategyProfile: original.strategyProfile,
       engineVersion: original.engineVersion, promptVersion: PROMPT_VERSION, model: this.model, reasoningEffort: this.effort,
       userInputs: original.userInputs, inputSnapshot: input, engineResult: original.engineResult,
-      inputHash: analysisHash(input, this.model, this.effort), requestKey }, true);
+      inputHash: analysisHash(input, original.engineResult, this.model, this.effort), requestKey }, true);
   }
 
   async get(id: string): Promise<AnalysisRun> {
@@ -46,21 +46,24 @@ export class AnalysisService {
   }
 
   async list(propertyId: string) { return this.repository.list(propertyId); }
+  async listSummaries(propertyId: string, page: number, pageSize: number) { return this.repository.listSummaries(propertyId, page, pageSize); }
 
   private async run(input: NewRun, force: boolean): Promise<AnalysisRun> {
     const { run, claimed } = await this.repository.claim(input, force);
     if (!claimed) return run;
     const start = Date.now();
+    let usage: AnalysisRun['tokenUsage'] = null;
     try {
       const compact = compactExplanationInput(input.inputSnapshot as PricingInput, input.engineResult);
       const response = await this.explanation.generate(compact);
+      usage = response.usage;
       const aiResult = validateExplanation(response.output, compact);
       return this.repository.finish(run.id, { status: 'SUCCEEDED', aiResult, failureCode: null,
         tokenUsage: response.usage, latencyMs: Date.now() - start });
     } catch (error) {
       const failureCode = error instanceof ExplanationFailure ? error.code : 'MODEL_UNAVAILABLE';
       return this.repository.finish(run.id, { status: 'FAILED', aiResult: null, failureCode,
-        tokenUsage: null, latencyMs: Date.now() - start });
+        tokenUsage: error instanceof ExplanationFailure ? error.usage ?? usage : usage, latencyMs: Date.now() - start });
     }
   }
 }

@@ -46,6 +46,17 @@ describe('ppi-pricing-v1 deterministic domain', () => {
     expect(row.rawWeight).toBeCloseTo(row.factors.distance * row.factors.recency * row.factors.sizeSimilarity, 5);
   });
 
+  it('does not move an exact median boundary when display proportions are rounded', () => {
+    const input = base();
+    input.recordedSales = [sale('a', 140000, 0, 1.5, 700), sale('b', 147000, 0, 1.5, 700),
+      sale('c', 220000, 0, 1.5), sale('d', 230000, 0, 1.25)];
+    const result = calculatePricing(input);
+    expect(result.includedComparables.map(row => row.rawWeight).sort((a, b) => a - b)).toEqual([0.0625, 0.0625, 0.25, 0.375]);
+    expect(result.referencePrice).toBe(220000);
+    expect(result.calculationTrace.weightedMedianPricePerSqft).toBe(220);
+    expect(result.referenceRange).toEqual([220000, 230000]);
+  });
+
   it('resists one extreme, low-weight sale', () => {
     const input = base();
     const original = calculatePricing(input);

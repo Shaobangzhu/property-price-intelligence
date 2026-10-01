@@ -46,7 +46,7 @@ p {
   border:0
 }
 :focus-visible {
-  outline:3px solid #76aaf7;
+  outline:3px solid #1768c9;
   outline-offset:2px
 }
 .app-shell {
@@ -172,7 +172,7 @@ p {
   border-radius:50%;
   display:grid;
   place-items:center;
-  color:#4473a9;
+  color:#526981;
   background:#e8f1fb;
   font-size:11px;
   font-weight:800
@@ -192,7 +192,7 @@ p {
 .page-kicker,.eyebrow {
   display:block;
   text-transform:uppercase;
-  color:#7090b5;
+  color:#526981;
   font-size:10px;
   font-weight:800;
   letter-spacing:.14em
@@ -202,12 +202,12 @@ p {
   margin:7px 0 4px
 }
 .page-intro p {
-  color:#718197;
+  color:#526981;
   font-size:13px;
   margin:0
 }
 .demo-banner {
-  color:#5b7799;
+  color:#526981;
   background:#edf4fb;
   border:1px solid #dbe8f7;
   border-radius:6px;
@@ -283,7 +283,7 @@ p {
   margin-top:4px
 }
 .search-hint {
-  color:#91a0b1;
+  color:#526981;
   font-size:11px
 }
 .search-form {
@@ -307,7 +307,7 @@ p {
   padding:0 14px 0 38px
 }
 .search-input-wrap input::placeholder,.history-toolbar input::placeholder {
-  color:#a1afbf
+  color:#526981
 }
 .search-icon {
   position:absolute;
@@ -352,7 +352,7 @@ p {
   align-items:center;
   justify-content:center;
   gap:5px;
-  color:#88a1bb;
+  color:#526981;
   font-size:10px
 }
 .property-illustration svg {
@@ -373,7 +373,7 @@ p {
 }
 .property-type,.detail-type {
   font-size:12px;
-  color:#8494a8;
+  color:#526981;
   margin-bottom:16px
 }
 .property-price {
@@ -384,7 +384,7 @@ p {
   border-bottom:1px solid #edf1f6
 }
 .property-price span,.fact-grid dt,.detail-facts dt {
-  color:#8999aa;
+  color:#526981;
   font-size:10px
 }
 .property-price strong {
@@ -411,7 +411,7 @@ p {
   margin:0
 }
 .metadata-line {
-  color:#a0adba;
+  color:#526981;
   font-size:10px;
   margin:0
 }
@@ -435,7 +435,7 @@ p {
 }
 .insight-reference span,.insight-metric span,.analysis-summary-row span,.detail-analysis span {
   display:block;
-  color:#7388a0;
+  color:#526981;
   font-size:10px;
   font-weight:700
 }
@@ -447,7 +447,7 @@ p {
   margin:7px 0 4px
 }
 .insight-reference small,.insight-metric small,.detail-analysis small {
-  color:#a0adbb;
+  color:#526981;
   font-size:10px
 }
 .insight-metric {
@@ -465,7 +465,7 @@ p {
   margin-top:19px
 }
 .insight-footnote {
-  color:#a0adba;
+  color:#526981;
   font-size:10px;
   margin:12px 0 0
 }
@@ -480,7 +480,7 @@ p {
   margin-bottom:12px
 }
 .map-context-label {
-  color:#8495a9;
+  color:#526981;
   font-size:10px;
   font-weight:700;
   white-space:nowrap
@@ -639,7 +639,7 @@ p {
   flex-wrap:wrap;
   align-items:center;
   margin-top:12px;
-  color:#788ca4;
+  color:#526981;
   font-size:9px
 }
 .map-legend span {
@@ -700,7 +700,7 @@ p {
 }
 .map-selection-note {
   margin:9px 0 0;
-  color:#9cabb9;
+  color:#526981;
   font-size:9px
 }
 .context-card .card-heading {
@@ -730,7 +730,7 @@ p {
 }
 .context-source {
   margin:0 0 10px;
-  color:#71869d;
+  color:#526981;
   font-size:10px
 }
 .context-group h3 {
@@ -755,7 +755,7 @@ p {
 .context-result span {
   display:block;
   margin:3px 0;
-  color:#6f8298;
+  color:#526981;
   font-size:10px
 }
 .hazard-results {
@@ -776,7 +776,7 @@ p {
   margin:0
 }
 .hazard-results dt {
-  color:#8294a6
+  color:#526981
 }
 .hazard-results dd {
   margin:0;
@@ -785,7 +785,7 @@ p {
 }
 .hazard-disclaimer {
   margin:15px 0 0;
-  color:#8294a6;
+  color:#526981;
   font-size:10px;
   line-height:1.45
 }
@@ -807,7 +807,7 @@ p {
 }
 .context-list small {
   display:block;
-  color:#97a6b5;
+  color:#526981;
   font-size:9px
 }
 .context-list strong {
@@ -820,7 +820,7 @@ p {
   margin-left:auto;
   white-space:nowrap;
   font-size:10px;
-  color:#899aaa;
+  color:#526981;
   font-style:normal
 }
 .context-callout {
@@ -871,7 +871,7 @@ th {
   text-align:left;
   text-transform:uppercase;
   letter-spacing:.06em;
-  color:#8fa0b1;
+  color:#526981;
   font-size:9px;
   font-weight:800;
   background:#f8fafc;
@@ -881,7 +881,7 @@ th {
 td {
   padding:14px 16px;
   border-top:1px solid #edf1f5;
-  color:#61768f;
+  color:#526981;
   white-space:nowrap
 }
 .selected-row {
@@ -901,7 +901,7 @@ td {
   text-align:left
 }
 .table-note {
-  color:#a0adbb;
+  color:#526981;
   border-top:1px solid #edf1f5;
   margin:0;
   padding:11px 20px;
@@ -910,7 +910,7 @@ td {
 .feedback-state {
   text-align:center;
   padding:30px 18px;
-  color:#8799ac
+  color:#526981
 }
 .feedback-compact {
   padding:18px 10px
@@ -956,7 +956,7 @@ td {
 }
 .history-toolbar label {
   display:block;
-  color:#657a93;
+  color:#526981;
   font-size:10px;
   font-weight:800;
   margin-bottom:7px
@@ -975,7 +975,7 @@ td {
 }
 .history-heading p {
   font-size:10px;
-  color:#91a0b1;
+  color:#526981;
   margin:0
 }
 .history-stats {
@@ -989,7 +989,7 @@ td {
 }
 .stat-card span {
   display:block;
-  color:#8192a6;
+  color:#526981;
   font-size:10px;
   font-weight:700
 }
@@ -1005,7 +1005,7 @@ td {
   margin-top:10px
 }
 .stat-card small {
-  color:#a1aebc;
+  color:#526981;
   font-size:10px
 }
 .history-layout {
@@ -1039,7 +1039,7 @@ td {
 }
 .history-address small {
   font-size:9px;
-  color:#a1afbf;
+  color:#526981;
   margin-top:3px
 }
 .status-tag {
@@ -1048,23 +1048,23 @@ td {
   font-size:9px;
   font-weight:800;
   background:#f0f2f5;
-  color:#79899a
+  color:#526981
 }
 .status-fresh {
   background:#e7f7ef;
-  color:#33966c
+  color:#216c4b
 }
 .status-needs-refresh {
   background:#fff5e5;
-  color:#b98634
+  color:#80552b
 }
 .status-stale {
   background:#fff0ed;
-  color:#ba6b55
+  color:#914531
 }
 .status-draft {
   background:#eef1f6;
-  color:#76889f
+  color:#526981
 }
 .row-actions {
   display:flex;
@@ -1089,7 +1089,7 @@ td {
   padding:14px 20px;
   border-top:1px solid #edf1f5;
   font-size:10px;
-  color:#8c9daf
+  color:#526981
 }
 .pagination>div {
   display:flex;
@@ -1130,7 +1130,7 @@ td {
 }
 .detail-source p,.detail-notes p {
   font-size:10px;
-  color:#8b9dae;
+  color:#526981;
   margin:6px 0 0
 }
 .modal-backdrop {
@@ -1163,14 +1163,14 @@ td {
   margin:5px 0 4px
 }
 .dialog-header p {
-  color:#8799aa;
+  color:#526981;
   font-size:11px;
   margin:0
 }
 .icon-button {
   border:0;
   background:#f3f6fa;
-  color:#7a8ca1;
+  color:#526981;
   border-radius:5px;
   width:28px;
   height:28px;
@@ -1182,7 +1182,7 @@ td {
   padding:20px 28px 24px
 }
 .dialog-property {
-  color:#657e9b;
+  color:#526981;
   font-size:11px;
   font-weight:700;
   margin-bottom:16px
@@ -1213,7 +1213,7 @@ td {
   font:inherit
 }
 .pricing-meta,.pricing-context-note {
-  color:#738aa2;
+  color:#526981;
   font-size:11px;
   line-height:1.5
 }
@@ -1303,7 +1303,7 @@ td {
   justify-content:center;
   gap:18px;
   flex-wrap:wrap;
-  color:#7b8fa5;
+  color:#526981;
   font-size:9px
 }
 .scale-key span {
@@ -1331,7 +1331,7 @@ td {
 .scale-bounds {
   display:flex;
   justify-content:space-between;
-  color:#93a3b4;
+  color:#526981;
   font-size:9px;
   margin-top:9px
 }
@@ -1372,7 +1372,7 @@ td {
   font-size:9px
 }
 .assumptions-section p {
-  color:#8799aa;
+  color:#526981;
   font-size:10px;
   margin:11px 0 0
 }
@@ -1386,7 +1386,7 @@ td {
 }
 .dialog-actions span {
   font-size:10px;
-  color:#9aabba
+  color:#526981
 }
 .dialog-actions>div {
   display:flex;
@@ -1556,7 +1556,7 @@ td {
 }
 
 .lookup-note {
-  color: #8495aa;
+  color:#526981;
   font-size: 10px;
   margin: 12px 0 0;
 }
@@ -1603,7 +1603,7 @@ td {
 }
 .detail-overrides > p,
 .detail-overrides label span {
-  color: #91a1b2;
+  color:#526981;
   font-size: 9px;
   line-height: 1.45;
 }
@@ -1644,7 +1644,7 @@ td {
 .evidence-section { border-top: 1px solid #e8eef5; }
 .evidence-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 14px 20px; }
 .evidence-heading h3 { font-size: 13px; margin: 0; }
-.evidence-heading span { color: #8495a9; font-size: 10px; }
-.evidence-message { padding: 12px 20px; color: #718197; font-size: 11px; }
+.evidence-heading span { color:#526981; font-size: 10px; }
+.evidence-message { padding: 12px 20px; color:#526981; font-size: 11px; }
 .selected-evidence { border-top: 1px solid #e8eef5; background: #f4f9ff; padding: 13px 20px; font-size: 11px; display: flex; flex-direction: column; gap: 5px; }
-.selected-evidence span { color: #607896; }
+.selected-evidence span { color:#526981; }

@@ -1,4 +1,4 @@
-import { AnalysisListResponse, AnalysisRun, ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
+import { AnalysisListResponse, AnalysisSummaryListResponse, AnalysisRun, ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
 
 const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 
@@ -28,19 +28,22 @@ export function previewPricing(id: string, payload: PricingPreviewRequest, signa
   return request(`/properties/${encodeURIComponent(id)}/pricing/preview`, PricingPreviewResponse,
     { method: 'POST', body: JSON.stringify(payload), signal, cache: 'no-store' });
 }
-export function createAnalysis(id: string, payload: PricingPreviewRequest, key: string) {
+export function createAnalysis(id: string, payload: PricingPreviewRequest, key: string, signal?: AbortSignal) {
   return request(`/properties/${encodeURIComponent(id)}/analyses`, AnalysisRun,
-    { method: 'POST', body: JSON.stringify(payload), headers: { 'Idempotency-Key': key }, cache: 'no-store' });
+    { method: 'POST', body: JSON.stringify(payload), headers: { 'Idempotency-Key': key }, signal, cache: 'no-store' });
 }
 export function listAnalyses(id: string, signal?: AbortSignal) {
   return request(`/properties/${encodeURIComponent(id)}/analyses`, AnalysisListResponse, { signal, cache: 'no-store' });
 }
+export function listAnalysisSummaries(id: string, signal?: AbortSignal, page = 1) {
+  return request(`/properties/${encodeURIComponent(id)}/analyses?summary=true&page=${page}&pageSize=20`, AnalysisSummaryListResponse, { signal, cache: 'no-store' });
+}
 export function getAnalysis(id: string, signal?: AbortSignal) {
   return request(`/analyses/${encodeURIComponent(id)}`, AnalysisRun, { signal, cache: 'no-store' });
 }
-export function regenerateAnalysis(id: string, key: string) {
+export function regenerateAnalysis(id: string, key: string, signal?: AbortSignal) {
   return request(`/analyses/${encodeURIComponent(id)}/regenerate-explanation`, AnalysisRun,
-    { method: 'POST', body: '{}', headers: { 'Idempotency-Key': key }, cache: 'no-store' });
+    { method: 'POST', body: '{}', headers: { 'Idempotency-Key': key }, signal, cache: 'no-store' });
 }
 export function listProperties(options: { page: number; pageSize: number; search: string }, signal?: AbortSignal) {
   const query = new URLSearchParams({ page: String(options.page), pageSize: String(options.pageSize), search: options.search });

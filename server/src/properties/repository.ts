@@ -10,7 +10,7 @@ export type StoredSnapshot = {
 export type StoredRecord = { property: StoredProperty; snapshot: StoredSnapshot | null };
 export type SaveProfile = {
   profile: NormalizedProviderProperty; normalizedAddressKey: string; queryHash: string; contentHash: string;
-  fetchedAt: string; expiresAt: string;
+  fetchedAt: string; expiresAt: string; expectedPropertyId?: string;
 };
 export type PropertyPage = { items: StoredRecord[]; total: number; page: number; pageSize: number };
 export interface PropertyRepository {

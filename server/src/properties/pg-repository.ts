@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { PropertyPatchInput, PropertyRecord } from '@ppi/shared';
 import type { NormalizedProviderProperty } from './provider.js';
 import type { PropertyRepository, SaveProfile, StoredProperty, StoredRecord, StoredSnapshot } from './repository.js';
+import { addressMatches } from './address.js';
 
 type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
 type Row = Record<string, unknown>;
@@ -76,8 +77,16 @@ export class PgPropertyRepository implements PropertyRepository {
       await client.query('BEGIN');
       const locks = [`address:${input.normalizedAddressKey}`, `provider:${input.profile.providerPropertyId ?? input.normalizedAddressKey}`].sort();
       for (const lock of locks) await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lock]);
-      const existing = await client.query(`SELECT "id" FROM "Property" WHERE ("provider" = $1 AND "providerPropertyId" = $2 AND $2 IS NOT NULL) OR "normalizedAddressKey" = $3 FOR UPDATE`, [input.profile.provider, input.profile.providerPropertyId, input.normalizedAddressKey]);
+      // A refresh may finish after the user deletes the subject. Keep the owning row
+      // locked through the write so an old request cannot recreate that property.
+      if (input.expectedPropertyId) {
+        const expected = await client.query('SELECT "id" FROM "Property" WHERE "id"=$1 FOR UPDATE', [input.expectedPropertyId]);
+        if (!expected.rows[0]) throw new Error('PROPERTY_NOT_FOUND');
+      }
+      const existing = await client.query(`SELECT "id", "formattedAddress", "unit" FROM "Property" WHERE ("provider" = $1 AND "providerPropertyId" = $2 AND $2 IS NOT NULL) OR "normalizedAddressKey" = $3 FOR UPDATE`, [input.profile.provider, input.profile.providerPropertyId, input.normalizedAddressKey]);
       if (existing.rowCount && existing.rowCount > 1) throw new Error('PROPERTY_IDENTITY_CONFLICT');
+      if (input.expectedPropertyId && existing.rows[0]?.id !== input.expectedPropertyId) throw new Error('PROPERTY_IDENTITY_CONFLICT');
+      if (existing.rows[0] && !addressMatches(input.profile.formattedAddress, { formattedAddress: text(existing.rows[0].formattedAddress), unit: nullableText(existing.rows[0].unit) })) throw new Error('PROPERTY_IDENTITY_CONFLICT');
       const values = profileValues(input.profile, input.normalizedAddressKey);
       let propertyId: string;
       if (existing.rows[0]) {

@@ -3,12 +3,15 @@ const replacements: Record<string, string> = {
   apartment: 'unit', apt: 'unit', suite: 'unit', ste: 'unit', '#': 'unit'
 };
 
-/** Address keys retain unit tokens so two apartments never collide. */
-export function normalizeAddressKey(input: string): string {
+/** Keep token boundaries for exact identity checks, including street numbers. */
+export function normalizeAddressIdentity(input: string): string {
   return input.toLowerCase().replace(/#/g, ' unit ')
     .replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/)
-    .map(token => replacements[token] ?? token).join('');
+    .map(token => replacements[token] ?? token).join(' ');
 }
+
+/** Existing persisted lookup keys; token-aware identity checks guard collisions. */
+export function normalizeAddressKey(input: string): string { return normalizeAddressIdentity(input).replaceAll(' ', ''); }
 
 export function requestedUnit(input: string): string | null {
   const match = input.toLowerCase().match(/(?:\b(?:apt|apartment|unit|suite|ste)\b|#)\s*([a-z0-9-]+)/);
@@ -19,5 +22,5 @@ export function addressMatches(input: string, candidate: { formattedAddress: str
   const inputUnit = requestedUnit(input);
   const candidateUnit = candidate.unit ? candidate.unit.toLowerCase().replace(/^(?:apt|apartment|unit|suite|ste)\s*/i, '').replace(/[^a-z0-9]/g, '') : null;
   if (inputUnit !== candidateUnit) return false;
-  return normalizeAddressKey(input) === normalizeAddressKey(candidate.formattedAddress);
+  return normalizeAddressIdentity(input) === normalizeAddressIdentity(candidate.formattedAddress);
 }

@@ -1,96 +1,232 @@
-import { test, expect } from '@playwright/test';
-import { calculatePricing, type PricingInput } from '@ppi/shared';
+import { test, expect, type Locator, type Page } from '@playwright/test';
+import { DEMO_ADDRESS, DEMO_ID, DEMO_SUMMARY, SECOND_ADDRESS, installMockApi } from './support/mock-api.js';
 
-const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const address = '123 Main St, Apt 2, Austin, TX 78701';
-const makeRecord = () => ({
-  property: {
-    id, provider: 'RENTCAST', providerPropertyId: 'synthetic-provider-id', normalizedAddressKey: '123mainstunit2austintx78701',
-    formattedAddress: address, addressLine1: '123 Main St', unit: 'Apt 2', city: 'Austin', state: 'TX', zipCode: '78701',
-    latitude: 30.1, longitude: -97.1, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1200, lotSizeSqft: null,
-    yearBuilt: 2001, currentListPrice: null, refreshFailedAt: null, notes: null as string | null, userOverrides: {},
-    effectiveValues: { bedrooms: 2, bathrooms: 2, livingAreaSqft: 1200, yearBuilt: 2001 },
-    createdAt: '2026-09-29T12:00:00.000Z', updatedAt: '2026-09-29T12:00:00.000Z'
-  },
-  cache: { source: 'RENTCAST', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-13T12:00:00.000Z', freshness: 'FRESH', cacheStatus: 'MISS' as string | null }
-});
-const market = () => ({ propertyId: id,
-  recordedSales: { kind: 'RECORDED_SALES', candidates: [{ id: 'recorded_sale:one', evidenceType: 'RECORDED_SALE', providerId: 'one', address: '125 Main St, Austin, TX 78701', latitude: 30.11, longitude: -97.11, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1180, lotSizeSqft: null, yearBuilt: null, price: 410000, eventDate: '2026-06-01T00:00:00.000Z', distanceMiles: 0.91, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-10-06T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: 365 }, errorCode: null },
-  activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [{ id: 'active_asking_price:two', evidenceType: 'ACTIVE_ASKING_PRICE', providerId: 'two', address: '130 Main St, Austin, TX 78701', latitude: 30.12, longitude: -97.12, propertyType: 'Condo', bedrooms: 2, bathrooms: 2, livingAreaSqft: 1200, lotSizeSqft: null, yearBuilt: null, price: 450000, eventDate: '2026-09-01T00:00:00.000Z', distanceMiles: 1.2, source: 'RENTCAST' }], source: 'RENTCAST', freshness: 'FRESH', cacheStatus: 'MISS', fetchedAt: '2026-09-29T12:00:00.000Z', expiresAt: '2026-09-30T12:00:00.000Z', query: { latitude: 30.1, longitude: -97.1, radiusMiles: 2, limit: 25, saleDateRangeDays: null }, errorCode: null } });
-const pricing = (): PricingInput => ({ subject: { id, propertyType: 'Condo', livingAreaSqft: 1200, bedrooms: 2, bathrooms: 2, currentListPrice: null, overrideFields: [] },
-  recordedSales: [], activeListings: [], mode: 'OFFER', strategyProfile: 'BALANCED', maxBudget: null, asOf: '2026-09-29T12:00:00.000Z',
-  metadata: { propertyFreshness: 'FRESH', salesFreshness: 'FRESH', listingsFreshness: 'FRESH', salesSource: 'RENTCAST', listingsSource: 'RENTCAST', searchRadiusMiles: 2, saleDateRangeDays: 365 } });
-
-test('searches a subject and manages its saved History record without external calls', async ({ page }) => {
-  let record = makeRecord();
-  let saved = false;
-  await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:5173/') ? route.continue() : route.abort());
-  await page.route('**/api/health/live', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'live', requestId: 'synthetic' }) }));
-  await page.route(/\/api\/properties(?:\/|\?|$)/, async route => {
-    const url = new URL(route.request().url());
-    const method = route.request().method();
-    let status = 200;
-    let body: unknown;
-    if (url.pathname.endsWith('/resolve') && method === 'POST') { saved = true; body = record; }
-    else if (url.pathname.endsWith('/market-context')) body = market();
-    else if (url.pathname.endsWith('/assigned-schools')) body = { propertyId: id, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null };
-    else if (url.pathname.endsWith('/nearby-places')) body = { propertyId: id, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 };
-    else if (url.pathname.endsWith('/wildfire-context')) body = { propertyId: id, status: 'INSIDE_DISPLAYED_ZONE', classification: 'High', responsibilityArea: 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'effective 2024-04-01', checkedAt: '2026-09-29T12:00:00.000Z' };
-    else if (url.pathname.endsWith('/fault-context')) body = { propertyId: id, contextType: 'FAULT_TRACE', status: 'NEAREST_MAPPED_FAULT', nearestFeatureName: 'Serra fault', distanceMiles: 7.13, searchRadiusMiles: 20, sourceName: 'California Geological Survey 2010 Fault Activity Map — Quaternary Faults', sourceVersion: '2010 map', checkedAt: '2026-09-29T12:00:00.000Z' };
-    else if (url.pathname.endsWith('/pricing/preview')) body = calculatePricing(pricing());
-    else if (url.pathname.endsWith('/refresh') && method === 'POST') { record.cache.cacheStatus = 'REFRESHED'; body = record; }
-    else if (method === 'PATCH') { record.property.notes = (route.request().postDataJSON() as { notes: string }).notes; body = record; }
-    else if (method === 'DELETE') { saved = false; status = 204; body = null; }
-    else if (url.pathname.endsWith('/properties')) body = { items: saved ? [record] : [], total: saved ? 1 : 0, page: 1, pageSize: 5 };
-    else body = record;
-    await route.fulfill({ status, contentType: 'application/json', body: body === null ? '' : JSON.stringify(body) });
-  });
-  await page.goto('/dashboard?mapTestMode=1');
-  await expect(page.getByText('No property selected')).toBeVisible();
-  await expect(page.getByText('API: available')).toBeVisible();
+async function search(page: Page, address = DEMO_ADDRESS) {
   await page.getByRole('textbox', { name: 'Search a property address' }).fill(address);
-  await page.getByRole('button', { name: 'Search' }).click();
-  await expect(page.getByRole('heading', { name: address })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Sold Price' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Asking Price' })).toBeVisible();
-  await page.getByRole('button', { name: /Select recorded sale 125 Main/ }).click();
-  await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: /Active listing marker: 130 Main/ }).click();
-  await expect(page.getByRole('row', { name: /130 Main St/ })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('button', { name: 'Schools', exact: true }).click();
-  await expect(page.getByText('Assigned school information is unavailable for this property.')).toBeVisible();
-  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Schools', exact: true })).toHaveAttribute('aria-pressed', 'false');
-  await page.getByRole('button', { name: 'Grocery marker: Market One' }).click();
-  await expect(page.getByRole('button', { name: 'Select grocery Market One' })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Grocery marker: Market One' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Wildfire', exact: true }).click();
-  await expect(page.getByText('Subject point intersects a displayed High Fire Hazard Severity Zone.')).toBeVisible();
-  await expect(page.getByTestId('government-overlay')).toHaveCount(2);
-  await page.getByRole('button', { name: 'Faults', exact: true }).click();
-  await expect(page.getByText('Serra fault')).toBeVisible();
-  await expect(page.getByTestId('government-overlay')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Faults', exact: true }).click();
-  await expect(page.getByTestId('government-overlay')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Offer Price' }).click();
-  const pricingDialog = page.getByRole('dialog', { name: 'Offer Price Analysis' });
-  await expect(pricingDialog.getByText('Insufficient evidence', { exact: true })).toBeVisible();
-  await expect(pricingDialog.getByText('Not available', { exact: true }).first()).toBeVisible();
-  await pricingDialog.getByRole('button', { name: 'Close dialog' }).click();
-  await page.getByRole('link', { name: 'History' }).click();
-  await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
-  await page.getByRole('row', { name: /123 Main St/ }).getByRole('button', { name: 'View' }).click();
-  const detail = page.getByRole('complementary', { name: 'Selected Record Details' });
-  await expect(detail).toContainText(address);
-  await detail.getByRole('textbox', { name: 'Notes' }).fill('Check disclosures');
-  await detail.getByRole('button', { name: 'Save changes' }).click();
-  await expect(detail.getByRole('textbox', { name: 'Notes' })).toHaveValue('Check disclosures');
-  await page.getByRole('row', { name: /123 Main St/ }).getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.getByRole('row', { name: /123 Main St/ })).toBeVisible();
-  page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('row', { name: /123 Main St/ }).getByRole('button', { name: 'Delete' }).click();
-  await expect(page.getByText('History empty')).toBeVisible();
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+}
+async function assertPrice(dialog: Locator, expected = '$800,000') {
+  await expect(dialog.locator('.highlight-summary strong')).toHaveText(expected);
+  await expect(dialog.locator('.analysis-summary-row').getByText('$780,000 – $820,000', { exact: true })).toBeVisible();
+}
+async function assertCoreMarkers(page: Page) {
+  await expect(page.getByRole('img', { name: `Subject property marker: ${DEMO_ADDRESS}` })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Recorded sale marker: 1801 Synthetic/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Active listing marker: 1804 Synthetic/ })).toBeVisible();
+}
+
+test('complete synthetic core workflow: contexts, deterministic Offer and Listing, exact History reopen, and CRUD', async ({ page }) => {
+  const mock = await installMockApi(page);
+  await test.step('1–3: Dashboard search and persisted subject summary', async () => {
+    await page.goto('/dashboard?mapTestMode=1');
+    await expect(page.getByText('No property selected')).toBeVisible();
+    await search(page);
+    await expect(page.getByRole('heading', { name: DEMO_ADDRESS })).toBeVisible();
+    await expect(page.getByText('2,000 sqft', { exact: true }).first()).toBeVisible();
+  });
+  await test.step('4–6: recorded sales and bidirectional table/map selection', async () => {
+    await expect(page.getByRole('columnheader', { name: 'Sold Price' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Asking Price' })).toBeVisible();
+    await page.getByRole('button', { name: /Select recorded sale 1801 Synthetic/ }).click();
+    await expect(page.getByRole('button', { name: /Recorded sale marker: 1801 Synthetic/ })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: /Active listing marker: 1804 Synthetic/ }).click();
+    await expect(page.getByRole('row', { name: /1804 Synthetic/ })).toHaveAttribute('aria-selected', 'true');
+  });
+  await test.step('7–11: all four exclusive contexts preserve core markers', async () => {
+    await page.getByRole('button', { name: 'Schools', exact: true }).click();
+    await expect(page.getByText('Assigned school information is unavailable for this property.')).toBeVisible();
+    await page.getByRole('button', { name: 'Grocery', exact: true }).click();
+    await page.getByRole('button', { name: 'Grocery marker: Synthetic Demo Grocery' }).click();
+    await expect(page.getByRole('button', { name: 'Select grocery Synthetic Demo Grocery' })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Wildfire', exact: true }).click();
+    await expect(page.getByText('Subject point intersects a displayed High Fire Hazard Severity Zone.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Demo Grocery' })).toHaveCount(0);
+    await expect(page.getByTestId('government-overlay')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Faults', exact: true }).click();
+    await expect(page.getByText('Synthetic mapped fault trace', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('government-overlay')).toHaveCount(1);
+    await expect(page.getByRole('group', { name: 'Map context' }).locator('[aria-pressed="true"]')).toHaveCount(1);
+    await assertCoreMarkers(page);
+    await page.getByRole('button', { name: 'Faults', exact: true }).click();
+    await expect(page.getByTestId('government-overlay')).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Map context' }).locator('[aria-pressed="true"]')).toHaveCount(0);
+  });
+  let offerId: string;
+  let listingId: string;
+  await test.step('12–15: saved Offer, deterministic numbers, prepared explanation, Escape/focus restoration', async () => {
+    const opener = page.getByRole('button', { name: 'Offer Price', exact: true });
+    await opener.click();
+    const dialog = page.getByRole('dialog', { name: 'Offer Price Analysis' });
+    await assertPrice(dialog);
+    await expect(dialog.getByText(DEMO_SUMMARY)).toBeVisible();
+    await expect(dialog.getByText(/Price calculated by PPI pricing engine; explanation AI-assisted/)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close dialog' }).focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+    offerId = mock.runs.find(run => run.mode === 'OFFER')!.id;
+    await page.keyboard.press('Escape');
+    await expect(opener).toBeFocused();
+  });
+  await test.step('16: saved Listing analysis', async () => {
+    await page.getByRole('button', { name: 'Listing Price', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Listing Price Analysis' });
+    await assertPrice(dialog);
+    await expect(dialog.getByText(DEMO_SUMMARY)).toBeVisible();
+    listingId = mock.runs.find(run => run.mode === 'LISTING')!.id;
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  });
+  await test.step('17–20: History selects subject and reopens frozen Offer and Listing after source refresh', async () => {
+    await page.getByRole('link', { name: 'History', exact: true }).click();
+    const row = page.getByRole('row', { name: /1847 Synthetic Alder/ });
+    await row.getByRole('button', { name: 'View', exact: true }).click();
+    const detail = page.getByRole('complementary', { name: 'Selected Record Details' });
+    await expect(detail.getByText('Analysis versions', { exact: true })).toBeVisible();
+    await row.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(detail.getByText('2,400 sqft', { exact: true })).toBeVisible();
+    for (const [mode, id] of [['Offer', offerId], ['Listing', listingId]] as const) {
+      await detail.locator('.detail-analysis').filter({ hasText: `Latest ${mode} Analysis` }).getByRole('button', { name: 'View Analysis' }).click();
+      const dialog = page.getByRole('dialog', { name: `${mode} Price Analysis` });
+      await assertPrice(dialog);
+      await expect(dialog.getByText(DEMO_SUMMARY)).toBeVisible();
+      await expect(dialog.getByText(`Run ${id}`, { exact: false })).toBeVisible();
+      await expect(dialog.getByRole('combobox', { name: 'Strategy profile' })).toBeDisabled();
+      await dialog.getByRole('button', { name: 'Close dialog' }).click();
+    }
+    expect(mock.stats.analysisGenerations).toBe(2);
+    expect(mock.stats.analysisRequests).toBe(2);
+  });
+  await test.step('21: return Dashboard; then edit/delete only the selected saved property', async () => {
+    await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'History', exact: true }).click();
+    const detail = page.getByRole('complementary', { name: 'Selected Record Details' });
+    const fetchedAt = mock.records.get(DEMO_ID)!.cache.fetchedAt;
+    await detail.getByRole('textbox', { name: 'Notes', exact: true }).fill('Synthetic demo: review disclosures');
+    await detail.getByRole('button', { name: 'Save changes' }).click();
+    await expect(detail.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(mock.records.get(DEMO_ID)!.cache.fetchedAt).toBe(fetchedAt);
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('row', { name: /1847 Synthetic Alder/ }).getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(page.getByText('History empty')).toBeVisible();
+    expect(mock.runs).toHaveLength(0);
+  });
+  expect(mock.stats.blockedExternalRequests).toBe(0);
+  expect(mock.stats.unhandledApiRequests).toEqual([]);
 });
+
+test('context and explanation outages preserve deterministic pricing and the core map', async ({ page }) => {
+  const mock = await installMockApi(page, { contextFailures: true, aiFailure: true });
+  await page.goto('/dashboard?mapTestMode=1');
+  await search(page);
+  for (const [layer, message] of [['Schools', 'Assigned school information is unavailable for this property.'], ['Grocery', 'Grocery unavailable'], ['Wildfire', 'Data unavailable from CAL FIRE.'], ['Faults', 'Data unavailable from California Geological Survey.']]) {
+    await page.getByRole('button', { name: layer!, exact: true }).click();
+    await expect(page.getByText(message!, { exact: true })).toBeVisible();
+    await assertCoreMarkers(page);
+  }
+  await page.getByRole('button', { name: 'Offer Price', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Offer Price Analysis' });
+  await assertPrice(dialog);
+  await expect(dialog.getByText('Explanation unavailable. The deterministic price remains available.')).toBeVisible();
+  expect(mock.stats.blockedExternalRequests).toBe(0);
+});
+
+test('insufficient evidence and unavailable basemap preserve useful property UI', async ({ page }) => {
+  await installMockApi(page, { insufficient: true });
+  await page.goto('/dashboard?mapUnavailableMode=1');
+  await search(page);
+  await expect(page.getByText('Map unavailable. Property and market evidence remain available.')).toBeVisible();
+  await page.getByRole('button', { name: 'Offer Price', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Offer Price Analysis' });
+  await expect(dialog.getByText('Insufficient evidence', { exact: true })).toBeVisible();
+  await expect(dialog.locator('.highlight-summary strong')).toHaveText('Not available');
+});
+
+for (const code of ['PROVIDER_UNAVAILABLE', 'PROVIDER_MALFORMED', 'DATABASE_UNAVAILABLE'] as const) {
+  test(`${code} displays a recoverable search error with no fixture substitution`, async ({ page }) => {
+    const mock = await installMockApi(page, { resolveFailure: code });
+    await page.goto('/dashboard?mapTestMode=1');
+    await search(page);
+    await expect(page.getByRole('heading', { name: DEMO_ADDRESS })).toHaveCount(0);
+    await expect(page.getByRole('alert')).toBeVisible();
+    expect(mock.records.size).toBe(0);
+    expect(mock.stats.resolveRequests).toBe(1);
+  });
+}
+
+test('late subject A and rapid context switching cannot replace subject B or current context', async ({ page }) => {
+  let releaseFirst: (() => void) | undefined;
+  const first = new Promise<void>(resolve => { releaseFirst = resolve; });
+  let delayFirst = true;
+  const mock = await installMockApi(page, { beforeResponse: async (path, payload) => {
+    if (path.endsWith('/resolve') && (payload as { address: string }).address === DEMO_ADDRESS && delayFirst) { delayFirst = false; await first; }
+  } });
+  await page.goto('/dashboard?mapTestMode=1');
+  await search(page);
+  await search(page, SECOND_ADDRESS);
+  await expect(page.getByRole('heading', { name: SECOND_ADDRESS })).toBeVisible();
+  releaseFirst!();
+  await expect.poll(() => mock.stats.completedApiRequests.filter(path => path.endsWith('/resolve')).length).toBe(2);
+  await expect(page.getByRole('heading', { name: DEMO_ADDRESS })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
+  await page.getByRole('button', { name: 'Wildfire', exact: true }).click();
+  await page.getByRole('button', { name: 'Faults', exact: true }).click();
+  await expect(page.getByText('Synthetic mapped fault trace', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Demo Grocery' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Map context' }).locator('[aria-pressed="true"]')).toHaveCount(1);
+});
+
+function deferred() {
+  let release = () => {};
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+}
+
+test('late comparable evidence and context responses are discarded when the selected property changes', async ({ page }) => {
+  const market = deferred(), grocery = deferred();
+  let marketStarted = false, groceryStarted = false;
+  const mock = await installMockApi(page, { beforeResponse: async path => {
+    if (path === `/api/properties/${DEMO_ID}/market-context`) { marketStarted = true; await market.promise; }
+    if (path === `/api/properties/${DEMO_ID}/nearby-places`) { groceryStarted = true; await grocery.promise; }
+  } });
+  await page.goto('/dashboard');
+  await search(page);
+  await expect(page.getByRole('heading', { name: DEMO_ADDRESS })).toBeVisible();
+  await expect.poll(() => marketStarted).toBe(true);
+  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
+  await expect.poll(() => groceryStarted).toBe(true);
+  await search(page, SECOND_ADDRESS);
+  await expect(page.getByRole('heading', { name: SECOND_ADDRESS })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Recorded sale marker: 2801 Synthetic/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Crescent Grocery' })).toBeVisible();
+  market.release(); grocery.release();
+  await expect.poll(() => mock.stats.completedApiRequests.includes(`/api/properties/${DEMO_ID}/market-context`)).toBe(true);
+  await expect.poll(() => mock.stats.completedApiRequests.includes(`/api/properties/${DEMO_ID}/nearby-places`)).toBe(true);
+  await expect(page.getByRole('button', { name: /Recorded sale marker: 1801 Synthetic/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Demo Grocery' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Crescent Grocery' })).toBeVisible();
+});
+
+for (const mode of ['Offer', 'Listing']) {
+  test(`late ${mode} analysis cannot reopen over a newly selected property`, async ({ page }) => {
+    const analysis = deferred();
+    let analysisStarted = false;
+    const mock = await installMockApi(page, { beforeResponse: async path => {
+      if (path === `/api/properties/${DEMO_ID}/analyses`) { analysisStarted = true; await analysis.promise; }
+    } });
+    await page.goto('/dashboard');
+    await search(page);
+    await page.getByRole('button', { name: `${mode} Price`, exact: true }).click();
+    await expect.poll(() => analysisStarted).toBe(true);
+    await page.getByRole('dialog', { name: `${mode} Price Analysis` }).getByRole('button', { name: 'Close dialog' }).click();
+    await search(page, SECOND_ADDRESS);
+    await expect(page.getByRole('heading', { name: SECOND_ADDRESS })).toBeVisible();
+    analysis.release();
+    await expect.poll(() => mock.stats.completedApiRequests.includes(`/api/properties/${DEMO_ID}/analyses`)).toBe(true);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: SECOND_ADDRESS })).toBeVisible();
+    expect(mock.stats.analysisRequests).toBe(1);
+  });
+}

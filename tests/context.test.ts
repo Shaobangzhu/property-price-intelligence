@@ -42,6 +42,16 @@ describe('assigned school boundary', () => {
     expect(result.schools[0]).toMatchObject({ name: 'Oak Elementary', latitude: null, longitude: null, matchStatus: 'UNMATCHED' });
     expect(getContextMarkers('schools', result, null)).toEqual([]);
   });
+
+  it('degrades assignment-source failure and keeps verified identities when enrichment fails', async () => {
+    const unavailable = new AssignedSchoolsService(repository(), { get: async () => { throw new Error('offline'); } });
+    expect(await unavailable.get(id)).toEqual({ propertyId: id, status: 'PROVIDER_ERROR', schools: [], assignmentSource: null });
+    const partial = new AssignedSchoolsService(repository(), { get: async () => ({ source: 'VERIFIED_PROVIDER', schools: [assignment] }) },
+      { lookup: async () => { throw new Error('offline'); } });
+    const result = await partial.get(id);
+    expect(result.status).toBe('UNMATCHED');
+    expect(result.schools[0]).toMatchObject({ name: assignment.name, assignmentSource: 'VERIFIED_PROVIDER', latitude: null, longitude: null });
+  });
 });
 
 describe('transient grocery context', () => {

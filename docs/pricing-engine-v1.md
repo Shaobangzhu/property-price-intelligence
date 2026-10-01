@@ -41,6 +41,8 @@ normalizedWeight = rawWeight / sum(rawWeight of selected sales)
 
 Factors and weights are returned for every included sale. The weighted median of `P` is the reference price per sqft. The **Market Reference Range** uses discrete weighted 20th and 80th percentiles of observed `P`; both are multiplied by subject sqft. Reference price and bounds are rounded to the nearest $100. This range is a description of selected sales, **not** a confidence interval or prediction interval. The outlier rule and weighted median reduce the effect of one extreme price; they cannot make heterogeneous properties truly comparable.
 
+Milestone 09 corrects an implementation rounding defect: quantiles now accumulate full-precision raw weights, while normalized display weights may be rounded to six decimals. This preserves the documented formula at exact percentile boundaries. Thresholds and formulas remain `ppi-pricing-v1`; previously saved results remain frozen. New analysis hashes include the actual result, so a corrected output cannot silently reuse an older calculation.
+
 Synthetic example: a 1,000 sqft condo with three eligible 1,000 sqft sales at $200,000, $220,000, and $240,000, respectively 30/60/90 days old and 0/0.5/1 miles away, produces a $220,000 reference and a $200,000–$220,000 Market Reference Range. The closer, newer sales receive higher weights. A fourth $2,000,000 sale at 1.9 miles and 300 days is marked `EXCLUDED_PRICE_OUTLIER`; it does not move the reference or range.
 
 ## Evidence quality

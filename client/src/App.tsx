@@ -15,7 +15,7 @@ export function ApiStatus() {
       .catch(() => { if (!controller.signal.aborted) setStatus('unavailable'); });
     return () => controller.abort();
   }, []);
-  return <div className="api-status-wrap"><p className={`api-status api-${status}`} role="status"><span className="status-dot" aria-hidden="true" />API: {status}</p>{status === 'unavailable' && <p className="api-notice" role="alert">Server unavailable. The explicitly labeled demo workspace remains available.</p>}</div>;
+  return <div className="api-status-wrap"><p className={`api-status api-${status}`} role="status"><span className="status-dot" aria-hidden="true" />API: {status}</p>{status === 'unavailable' && <p className="api-notice" role="alert">Server unavailable. Saved property requests require the local API.</p>}</div>;
 }
 
 export function App() {

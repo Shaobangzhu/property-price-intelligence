@@ -1,4 +1,4 @@
-# PPI architecture through Milestone 08
+# PPI architecture through Milestone 09
 
 The browser is a Vite/React app with Dashboard and History routes. Express owns HTTP validation, CORS, security headers, request IDs, and safe errors. Shared Zod contracts define property API inputs and responses. Docker PostgreSQL is the sole supported local database in the existing `ppi-local` Compose project. Prisma 6.12.0 defines and migrates the schema; runtime persistence uses the existing `pg` pool. No separate PostgreSQL service or Prisma Client runtime was introduced.
 
@@ -9,6 +9,8 @@ The browser is a Vite/React app with Dashboard and History routes. Express owns 
 The adapter projects only documented, validated structural and address fields into `NormalizedProviderProperty`. This whitelist excludes owner names, mailing addresses, phone numbers, email, unrelated identities, tax/history blobs, and raw provider JSON. The property-record endpoint does not establish a verified current listing price, so `currentListPrice` stays null. No comparable, listing, school, Places, hazard, or AI data is fetched or persisted here.
 
 The service waits for the remote response before opening a database transaction. The repository uses advisory transaction locks on normalized address and provider identity, uniqueness constraints for address key and provider ID, and a versioned snapshot insert. This protects simultaneous resolves and refreshes without holding a transaction through network latency. The browser aborts superseded searches and checks request identity before changing the selected property. In-process singleflight coalesces repeated requests for the same key.
+
+Milestone 09 adds token-aware checks around the legacy concatenated address key. A collision returns `PROPERTY_IDENTITY_CONFLICT` instead of overwriting another subject. Refresh requires its original property ID to still exist; deleting a subject while its provider request is pending cannot recreate it. Pricing captures one validated subject envelope before requesting comparable evidence for that same subject. Untrusted browser Origins and cross-site requests without an Origin are rejected before provider routes. No-Origin CLI requests remain supported for local development.
 
 ## Data ownership and freshness
 
@@ -51,3 +53,5 @@ The fault adapter queries CGS's 2010 Quaternary Faults polyline layer within 20 
 Dashboard resolves and displays a saved/live profile with source, fetched time, expiry, and stale status. History reads PostgreSQL with address search and pagination, and supports view, notes/override edits, explicit refresh, and confirmed delete. Offer and Listing create or reopen saved `AnalysisRun` versions. Each version stores the normalized pricing input and engine result, explanation and provenance metadata, and a deterministic hash. History opens exact frozen versions. A failed OpenAI explanation leaves its deterministic price visible. The older pricing preview API remains unsaved for deterministic-only callers. Milestone-02 pricing fixtures remain isolated and are not imported into production routes.
 
 OpenAI receives a compact allowlisted projection and returns only structured narrative. The pricing engine remains the sole source of prices; the model output is checked against evidence IDs and engine amounts. Places and GIS context do not enter AI or analysis persistence. See [AI analysis](ai-analysis.md). A future service may add a verified attendance assignment adapter or optional school metadata reference. The provider smoke CLI remains separate from app startup and property resolution.
+
+History uses bounded summary pages, independent latest Offer/Listing summaries, and exact-run reads. An open historical dialog keeps its owning property independently of table refreshes. Analysis requests reuse retry keys, suppress StrictMode duplicate POSTs, cancel obsolete client work, and retain deterministic results if status polling fails. Expired RUNNING rows become INTERRUPTED on claim or read. Map tests verify view reuse, watcher cleanup, contextual geometry clearing, and safe popup text rendering.

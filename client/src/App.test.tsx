@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { calculatePricing, type AnalysisRun, type PricingInput, type PropertyEnvelope } from '@ppi/shared';
 import { App } from './App.js';
+import { PricingAnalysisDialog } from './features/pricing/PricingAnalysisDialog.js';
 
 const firstId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const secondId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -44,6 +46,13 @@ const analysisResponse = (mode: 'OFFER' | 'LISTING', strategyProfile: PricingInp
   inputHash: 'a'.repeat(64), createdAt: '2026-09-29T12:00:00.000Z', completedAt: '2026-09-29T12:00:01.000Z',
   failureCode: null, tokenUsage: { inputTokens: 100, outputTokens: 50 }, latencyMs: 1000
 });
+const analysisSummary = (run: AnalysisRun) => ({
+  id: run.id, propertyId: run.propertyId, mode: run.mode, status: run.status, strategyProfile: run.strategyProfile,
+  engineVersion: run.engineVersion, promptVersion: run.promptVersion, model: run.model, reasoningEffort: run.reasoningEffort,
+  createdAt: run.createdAt, completedAt: run.completedAt, failureCode: run.failureCode,
+  suggestedPrice: run.mode === 'OFFER' ? run.engineResult.offerResult?.suggestedPrice ?? null : run.engineResult.listingResult?.suggestedPrice ?? null
+});
+const analysisPage = (runs: AnalysisRun[], total = runs.length, page = 1) => ({ items: runs.map(analysisSummary), total, page, pageSize: 20, latestOffer: runs.find(run => run.mode === 'OFFER') ? analysisSummary(runs.find(run => run.mode === 'OFFER')!) : null, latestListing: runs.find(run => run.mode === 'LISTING') ? analysisSummary(runs.find(run => run.mode === 'LISTING')!) : null });
 const renderAt = (path = '/dashboard') => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -288,7 +297,9 @@ describe('History', () => {
       const url = String(input);
       if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
       if (url.includes('/properties?')) return Response.json({ items: [makeRecord()], total: 1, page: 1, pageSize: 5 });
-      if (url.endsWith(`/properties/${firstId}/analyses`)) return Response.json({ items: [offer, listing], total: 2 });
+      if (url.includes(`/properties/${firstId}/analyses?summary=true`)) return Response.json(analysisPage([offer, listing]));
+      if (url.endsWith(`/analyses/${offer.id}`)) return Response.json(offer);
+      if (url.endsWith(`/analyses/${listing.id}`)) return Response.json(listing);
       return Response.json({ error: { code: 'REQUEST_FAILED', message: 'failed', requestId: 'synthetic' } }, { status: 500 });
     });
     renderAt('/history');
@@ -337,4 +348,232 @@ describe('History', () => {
     const patchCall = fetchMock.mock.calls.find(call => call[1]?.method === 'PATCH');
     expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({ notes: 'Check disclosures', overrides: { livingAreaSqft: 1300 } });
   });
+});
+
+describe('Milestone 09 client hardening', () => {
+  it('starts one analysis transport under StrictMode effect replay', async () => {
+    fetchMock.mockResolvedValue(Response.json(analysisResponse('OFFER', 'BALANCED')));
+    render(<StrictMode><PricingAnalysisDialog property={makeRecord()} mode="OFFER" onClose={() => {}} /></StrictMode>);
+    await screen.findByText('The engine used recorded sales.');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each(['OFFER', 'LISTING'] as const)('cancels a pending %s analysis when switching properties', async mode => {
+    const baseFetch = fetchMock.getMockImplementation() as (input: string, init?: RequestInit) => Promise<Response>;
+    let finish: ((value: Response) => void) | undefined;
+    let signal: AbortSignal | null | undefined;
+    fetchMock.mockImplementation((input: string, init?: RequestInit) => {
+      if (String(input).endsWith('/analyses') && init?.method === 'POST') {
+        signal = init.signal;
+        return new Promise<Response>(resolve => { finish = resolve; });
+      }
+      if (String(input).endsWith('/properties/resolve') && String(init?.body).includes('222')) return Promise.resolve(Response.json(makeRecord(secondId, '222 Oak Ave, Apt 2, Austin, TX 78701')));
+      return baseFetch(input, init);
+    });
+    renderAt();
+    const search = screen.getByRole('textbox', { name: 'Search a property address' });
+    fireEvent.change(search, { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: mode === 'OFFER' ? 'Offer Price' : 'Listing Price' }));
+    await screen.findByText('Generating analysis');
+    fireEvent.change(search, { target: { value: '222 Oak Ave, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('heading', { name: '222 Oak Ave, Apt 2, Austin, TX 78701' });
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { finish?.(Response.json(analysisResponse(mode, 'BALANCED'))); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getAllByText('Not analyzed', { exact: true })).toHaveLength(2);
+  });
+
+  it('ignores late context results after switching layers and properties', async () => {
+    const baseFetch = fetchMock.getMockImplementation() as (input: string, init?: RequestInit) => Promise<Response>;
+    let finishGrocery: ((value: Response) => void) | undefined;
+    let signal: AbortSignal | null | undefined;
+    fetchMock.mockImplementation((input: string, init?: RequestInit) => {
+      if (String(input).includes('/nearby-places')) { signal = init?.signal; return new Promise<Response>(resolve => { finishGrocery = resolve; }); }
+      if (String(input).endsWith('/properties/resolve') && String(init?.body).includes('222')) return Promise.resolve(Response.json(makeRecord(secondId, '222 Oak Ave, Apt 2, Austin, TX 78701')));
+      return baseFetch(input, init);
+    });
+    renderAt();
+    const search = screen.getByRole('textbox', { name: 'Search a property address' });
+    fireEvent.change(search, { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Grocery' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Wildfire' }));
+    expect(signal?.aborted).toBe(true);
+    await screen.findByText('Subject point intersects a displayed High Fire Hazard Severity Zone.');
+    fireEvent.change(search, { target: { value: '222 Oak Ave, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByRole('heading', { name: '222 Oak Ave, Apt 2, Austin, TX 78701' });
+    await act(async () => { finishGrocery?.(Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'late-place', name: 'Late synthetic grocery', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 })); });
+    expect(screen.queryByText('Late synthetic grocery')).toBeNull();
+    expect(screen.queryByTestId('government-overlay')).toBeNull();
+    expect(screen.getByRole('img', { name: /Subject property marker: 222 Oak/ })).toBeTruthy();
+  });
+
+  it('uses one idempotency key after a lost response and ignores duplicate generation clicks', async () => {
+    let fail = true;
+    fetchMock.mockImplementation(async () => {
+      if (fail) { fail = false; throw new Error('lost response'); }
+      return Response.json(analysisResponse('OFFER', 'BALANCED'));
+    });
+    render(<PricingAnalysisDialog property={makeRecord()} mode="OFFER" onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry analysis' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate analysis' }));
+    await screen.findByText('The engine used recorded sales.');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const keys = fetchMock.mock.calls.map(call => (call[1]?.headers as Record<string, string>)['Idempotency-Key']);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('keeps a historical regeneration retry on the same frozen run and idempotency key', async () => {
+    const original = analysisResponse('OFFER', 'BALANCED');
+    let fail = true;
+    fetchMock.mockImplementation(async () => {
+      if (fail) { fail = false; throw new Error('lost response'); }
+      return Response.json({ ...original, id: crypto.randomUUID() });
+    });
+    render(<PricingAnalysisDialog property={makeRecord()} mode="OFFER" historicalRun={original} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate explanation' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry analysis' }));
+    await waitFor(() => expect(screen.queryByText('Analysis request unavailable')).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(call => String(call[0]).endsWith(`/analyses/${original.id}/regenerate-explanation`))).toBe(true);
+    expect((fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>)['Idempotency-Key']).toBe((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>)['Idempotency-Key']);
+  });
+
+  it('retains saved deterministic pricing if a RUNNING status poll fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const run = { ...analysisResponse('OFFER', 'BALANCED'), status: 'RUNNING' as const, aiResult: null, completedAt: null };
+      fetchMock.mockRejectedValue(new Error('server unavailable'));
+      render(<PricingAnalysisDialog property={makeRecord()} mode="OFFER" historicalRun={run} onClose={() => {}} />);
+      expect(screen.getByRole('dialog').textContent).toContain('$410,000');
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByText('Analysis request unavailable')).toBeTruthy();
+      expect(screen.getByRole('dialog').textContent).toContain('$410,000');
+      expect(fetchMock.mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('traps modal focus, closes with Escape, and restores the opener', async () => {
+    const opener = document.createElement('button');
+    document.body.append(opener); opener.focus();
+    const close = vi.fn();
+    const view = render(<PricingAnalysisDialog property={makeRecord()} mode="OFFER" historicalRun={analysisResponse('OFFER', 'BALANCED')} onClose={close} />);
+    const first = screen.getByRole('button', { name: 'Close dialog' });
+    const last = screen.getByRole('button', { name: 'Close' });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last, { key: 'Tab' });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
+    view.unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('keeps the exact historical modal open while a property refresh reloads the table', async () => {
+    const run = analysisResponse('OFFER', 'BALANCED');
+    let refreshDone: ((value: Response) => void) | undefined;
+    let listCalls = 0;
+    fetchMock.mockImplementation((input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health/live')) return Promise.resolve(Response.json({ status: 'live', requestId: 'synthetic' }));
+      if (url.includes('/properties?')) { listCalls++; return listCalls === 1 ? Promise.resolve(Response.json({ items: [makeRecord()], total: 1, page: 1, pageSize: 5 })) : new Promise<Response>(() => {}); }
+      if (url.includes('/analyses?summary=true')) return Promise.resolve(Response.json(analysisPage([run])));
+      if (url.endsWith(`/analyses/${run.id}`)) return Promise.resolve(Response.json(run));
+      if (url.endsWith('/refresh') && init?.method === 'POST') return new Promise<Response>(resolve => { refreshDone = resolve; });
+      throw new Error('Unexpected mock request');
+    });
+    renderAt('/history');
+    await screen.findByText('Analysis versions');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'View Analysis' })[0]!);
+    await screen.findByRole('dialog');
+    await act(async () => { refreshDone?.(Response.json(makeRecord())); });
+    await screen.findByText('Loading history');
+    expect(screen.getByRole('dialog').textContent).toContain(run.id);
+    expect(screen.getByRole('dialog').textContent).toContain('123 Main St, Apt 2, Austin, TX 78701');
+    expect(screen.getByRole('dialog').textContent).toContain('$410,000');
+  });
+
+  it('reports analysis history failure and retries instead of claiming no analyses exist', async () => {
+    const run = analysisResponse('OFFER', 'BALANCED');
+    let fail = true;
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = String(input);
+      if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
+      if (url.includes('/properties?')) return Response.json({ items: [makeRecord()], total: 1, page: 1, pageSize: 5 });
+      if (fail) { fail = false; throw new Error('analysis read unavailable'); }
+      return Response.json(analysisPage([run]));
+    });
+    renderAt('/history');
+    await screen.findByText('Saved analyses could not be loaded. Property details remain available.');
+    expect(screen.queryByText('Not analyzed')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry analysis history' }));
+    await screen.findByText('Analysis versions');
+    expect(screen.queryByText('Saved analyses could not be loaded. Property details remain available.')).toBeNull();
+  });
+
+  it('loads older analysis summaries on request and preserves keyboard activation of row buttons', async () => {
+    const first = analysisResponse('OFFER', 'BALANCED'), older = analysisResponse('LISTING', 'BALANCED');
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = String(input);
+      if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
+      if (url.includes('/properties?')) return Response.json({ items: [makeRecord()], total: 1, page: 1, pageSize: 5 });
+      return Response.json(url.includes('page=2') ? { ...analysisPage([older], 2, 2), latestOffer: analysisSummary(first) } : analysisPage([first], 2));
+    });
+    renderAt('/history');
+    fireEvent.click(await screen.findByRole('button', { name: 'Load older analyses' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'View Analysis' })).toHaveLength(4));
+    expect(screen.queryByRole('button', { name: 'Load older analyses' })).toBeNull();
+    const button = screen.getByRole('button', { name: 'Refresh' });
+    expect(fireEvent.keyDown(button, { key: 'Enter' })).toBe(true);
+    expect(fireEvent.keyDown(button, { key: ' ' })).toBe(true);
+    const row = screen.getByRole('row', { name: /123 Main St/ });
+    expect(fireEvent.keyDown(row, { key: 'Enter' })).toBe(false);
+  });
+});
+
+it('shows the latest Listing even when it is older than the first summary page', async () => {
+  const offer = analysisResponse('OFFER', 'BALANCED'), listing = analysisResponse('LISTING', 'TEST_MARKET');
+  fetchMock.mockImplementation(async (input: string) => {
+    const url = String(input);
+    if (url.endsWith('/health/live')) return Response.json({ status: 'live', requestId: 'synthetic' });
+    if (url.includes('/properties?')) return Response.json({ items: [makeRecord()], total: 1, page: 1, pageSize: 5 });
+    if (url.endsWith(`/analyses/${listing.id}`)) return Response.json(listing);
+    return Response.json({ ...analysisPage([offer], 21), latestListing: analysisSummary(listing) });
+  });
+  renderAt('/history');
+  await screen.findByText('Analysis versions');
+  const detail = screen.getByRole('complementary');
+  const latestListing = within(detail).getByText('Latest Listing Analysis').closest('.detail-analysis') as HTMLElement;
+  expect(latestListing.textContent).toContain('$420,000');
+  fireEvent.click(within(latestListing).getByRole('button', { name: 'View Analysis' }));
+  expect((await screen.findByRole('dialog', { name: 'Listing Price Analysis' })).textContent).toContain(listing.id);
+});
+
+it('cancels a delayed historical reopen when another property is selected', async () => {
+  const run = analysisResponse('OFFER', 'BALANCED');
+  let finish: ((value: Response) => void) | undefined;
+  let signal: AbortSignal | null | undefined;
+  fetchMock.mockImplementation((input: string, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith('/health/live')) return Promise.resolve(Response.json({ status: 'live', requestId: 'synthetic' }));
+    if (url.includes('/properties?')) return Promise.resolve(Response.json({ items: [makeRecord(), makeRecord(secondId, '222 Oak Ave, Apt 2, Austin, TX 78701')], total: 2, page: 1, pageSize: 5 }));
+    if (url.includes(`/properties/${firstId}/analyses?`)) return Promise.resolve(Response.json(analysisPage([run])));
+    if (url.endsWith(`/analyses/${run.id}`)) { signal = init?.signal; return new Promise<Response>(resolve => { finish = resolve; }); }
+    return Promise.resolve(Response.json(analysisPage([])));
+  });
+  renderAt('/history');
+  await screen.findByText('Analysis versions');
+  fireEvent.click(screen.getAllByRole('button', { name: 'View Analysis' })[0]!);
+  fireEvent.click(screen.getByRole('row', { name: /222 Oak Ave/ }));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { finish?.(Response.json(run)); });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByRole('complementary').textContent).toContain('222 Oak Ave');
 });

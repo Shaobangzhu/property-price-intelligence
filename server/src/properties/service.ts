@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { PropertyEnvelope, PropertyListResponse, PropertyPatchInput } from '@ppi/shared';
-import { addressMatches, normalizeAddressKey, requestedUnit } from './address.js';
+import { addressMatches, normalizeAddressIdentity, normalizeAddressKey, requestedUnit } from './address.js';
 import { ProviderError, type NormalizedProviderProperty, type PropertyDataProvider } from './provider.js';
 import type { PropertyRepository, StoredRecord } from './repository.js';
 
@@ -75,11 +75,12 @@ export class PropertyService {
 
   resolve(address: string): Promise<PropertyEnvelope> {
     const key = normalizeAddressKey(address);
-    return this.singleflight(key, () => this.resolveInternal(address, key, false));
+    return this.singleflight(normalizeAddressIdentity(address), () => this.resolveInternal(address, key, false));
   }
 
   private async resolveInternal(address: string, key: string, force: boolean, known?: StoredRecord): Promise<PropertyEnvelope> {
     const existing = known ?? await this.repository.findByAddressKey(key);
+    if (existing && !addressMatches(address, existing.property)) throw new PropertyError('PROPERTY_IDENTITY_CONFLICT', 409);
     if (!force && existing?.snapshot && new Date(this.profileExpiresAt(existing.snapshot)).getTime() > this.now().getTime()
       && (!existing.property.refreshFailedAt || new Date(existing.property.refreshFailedAt).getTime() < new Date(existing.snapshot.fetchedAt).getTime())) return this.envelope(existing, 'HIT');
     let candidates: NormalizedProviderProperty[];
@@ -89,7 +90,9 @@ export class PropertyService {
         if (existing?.snapshot) {
           const failedAt = this.now().toISOString();
           await this.repository.markRefreshFailed(existing.property.id, failedAt);
-          return this.envelope({ ...existing, property: { ...existing.property, refreshFailedAt: failedAt } }, 'STALE_FALLBACK');
+          const fallback = await this.repository.findById(existing.property.id);
+          if (!fallback) throw new PropertyError('PROPERTY_NOT_FOUND', 404);
+          return this.envelope(fallback, 'STALE_FALLBACK');
         }
         throw providerFailure(error);
       }
@@ -102,9 +105,11 @@ export class PropertyService {
       saved = await this.repository.saveProfile({
         profile, normalizedAddressKey: normalizeAddressKey(profile.formattedAddress),
         queryHash: hash(key), contentHash: hash(JSON.stringify(profile)),
-        fetchedAt: fetchedAt.toISOString(), expiresAt: new Date(fetchedAt.getTime() + this.profileTtlDays * 86_400_000).toISOString()
+        fetchedAt: fetchedAt.toISOString(), expiresAt: new Date(fetchedAt.getTime() + this.profileTtlDays * 86_400_000).toISOString(),
+        ...(existing ? { expectedPropertyId: existing.property.id } : {})
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'PROPERTY_NOT_FOUND') throw new PropertyError('PROPERTY_NOT_FOUND', 404);
       if (error instanceof Error && error.message === 'PROPERTY_IDENTITY_CONFLICT') throw new PropertyError('PROPERTY_IDENTITY_CONFLICT', 409);
       if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') throw new PropertyError('PROPERTY_IDENTITY_CONFLICT', 409);
       throw error;
@@ -115,7 +120,7 @@ export class PropertyService {
   async refresh(id: string): Promise<PropertyEnvelope> {
     const current = await this.repository.findById(id);
     if (!current) throw new PropertyError('PROPERTY_NOT_FOUND', 404);
-    return this.singleflight(current.property.normalizedAddressKey, () => this.resolveInternal(current.property.formattedAddress, current.property.normalizedAddressKey, true, current));
+    return this.singleflight(normalizeAddressIdentity(current.property.formattedAddress), () => this.resolveInternal(current.property.formattedAddress, current.property.normalizedAddressKey, true, current));
   }
 
   async get(id: string): Promise<PropertyEnvelope> {

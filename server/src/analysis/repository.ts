@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { AnalysisRun, type PricingPreviewRequest, type PricingPreviewResponse } from '@ppi/shared';
+import { AnalysisRun, AnalysisSummary, type AnalysisSummaryListResponse, type PricingPreviewRequest, type PricingPreviewResponse } from '@ppi/shared';
 import { PropertyError } from '../properties/service.js';
 
 export type NewRun = {
@@ -11,6 +11,7 @@ export interface AnalysisRepository {
   claim(input: NewRun, force: boolean): Promise<{ run: AnalysisRun; claimed: boolean }>;
   get(id: string): Promise<AnalysisRun | null>;
   list(propertyId: string): Promise<{ items: AnalysisRun[]; total: number }>;
+  listSummaries(propertyId: string, page: number, pageSize: number): Promise<AnalysisSummaryListResponse>;
   finish(id: string, update: { status: 'SUCCEEDED' | 'FAILED'; aiResult: AnalysisRun['aiResult']; failureCode: string | null;
     tokenUsage: AnalysisRun['tokenUsage']; latencyMs: number }): Promise<AnalysisRun>;
 }
@@ -21,6 +22,14 @@ function fromRow(value: unknown): AnalysisRun {
     completedAt: row.completedAt ? (row.completedAt as Date).toISOString() : null,
     tokenUsage: row.tokenUsage ?? null, aiResult: row.aiResult ?? null, failureCode: row.failureCode ?? null, latencyMs: row.latencyMs ?? null });
 }
+const summaryColumns = `"id","propertyId","mode","status","strategyProfile","engineVersion","promptVersion",
+  "model","reasoningEffort","createdAt","completedAt","failureCode",
+  CASE WHEN "mode"='OFFER' THEN "engineResult"->'offerResult'->'suggestedPrice'
+    ELSE "engineResult"->'listingResult'->'suggestedPrice' END AS "suggestedPrice"`;
+function summaryFromRow(row: Record<string, unknown>): AnalysisSummary {
+  return AnalysisSummary.parse({ ...row, createdAt: (row.createdAt as Date).toISOString(),
+    completedAt: (row.completedAt as Date | null)?.toISOString() ?? null, suggestedPrice: row.suggestedPrice ?? null });
+}
 
 export class PgAnalysisRepository implements AnalysisRepository {
   constructor(private readonly pool: Pool) {}
@@ -29,7 +38,11 @@ export class PgAnalysisRepository implements AnalysisRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Serialize a reused request key even when callers submit different evidence hashes.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`analysis-request:${input.requestKey}`]);
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`analysis:${input.propertyId}:${input.mode}:${input.inputHash}`]);
+      await client.query(`UPDATE "AnalysisRun" SET "status"='FAILED', "failureCode"='INTERRUPTED', "completedAt"=CURRENT_TIMESTAMP
+        WHERE "propertyId"=$1 AND "status"='RUNNING' AND "createdAt" < CURRENT_TIMESTAMP - INTERVAL '45 seconds'`, [input.propertyId]);
       const request = await client.query('SELECT * FROM "AnalysisRun" WHERE "requestKey"=$1', [input.requestKey]);
       if (request.rows[0]) {
         const existing = fromRow(request.rows[0]);
@@ -37,9 +50,6 @@ export class PgAnalysisRepository implements AnalysisRepository {
           throw new PropertyError('REQUEST_KEY_CONFLICT', 409);
         await client.query('COMMIT'); return { run: existing, claimed: false };
       }
-      await client.query(`UPDATE "AnalysisRun" SET "status"='FAILED', "failureCode"='INTERRUPTED', "completedAt"=CURRENT_TIMESTAMP
-        WHERE "propertyId"=$1 AND "mode"=$2 AND "inputHash"=$3 AND "status"='RUNNING' AND "createdAt" < CURRENT_TIMESTAMP - INTERVAL '45 seconds'`,
-      [input.propertyId, input.mode, input.inputHash]);
       const active = await client.query(`SELECT * FROM "AnalysisRun" WHERE "propertyId"=$1 AND "mode"=$2 AND "inputHash"=$3 AND "status"='RUNNING' LIMIT 1`,
         [input.propertyId, input.mode, input.inputHash]);
       if (active.rows[0]) { await client.query('COMMIT'); return { run: fromRow(active.rows[0]), claimed: false }; }
@@ -59,16 +69,37 @@ export class PgAnalysisRepository implements AnalysisRepository {
   }
 
   async get(id: string): Promise<AnalysisRun | null> {
+    await this.expire('id', id);
     const result = await this.pool.query('SELECT * FROM "AnalysisRun" WHERE "id"=$1', [id]);
     return result.rows[0] ? fromRow(result.rows[0]) : null;
   }
 
   async list(propertyId: string): Promise<{ items: AnalysisRun[]; total: number }> {
+    await this.expire('propertyId', propertyId);
     const [items, count] = await Promise.all([
       this.pool.query('SELECT * FROM "AnalysisRun" WHERE "propertyId"=$1 ORDER BY "createdAt" DESC,"id" DESC LIMIT 100', [propertyId]),
       this.pool.query('SELECT COUNT(*)::int AS count FROM "AnalysisRun" WHERE "propertyId"=$1', [propertyId])
     ]);
     return { items: items.rows.map(fromRow), total: Number(count.rows[0]?.count ?? 0) };
+  }
+
+  async listSummaries(propertyId: string, page: number, pageSize: number): Promise<AnalysisSummaryListResponse> {
+    await this.expire('propertyId', propertyId);
+    const result = await this.pool.query(`SELECT ${summaryColumns},
+      COUNT(*) OVER()::int AS "total" FROM "AnalysisRun" WHERE "propertyId"=$1
+      ORDER BY "createdAt" DESC,"id" DESC LIMIT $2 OFFSET $3`, [propertyId, pageSize, (page - 1) * pageSize]);
+    const items = result.rows.map(summaryFromRow);
+    const latest = (await this.pool.query(`SELECT DISTINCT ON ("mode") ${summaryColumns} FROM "AnalysisRun" WHERE "propertyId"=$1
+      ORDER BY "mode","createdAt" DESC,"id" DESC`, [propertyId])).rows.map(summaryFromRow);
+    const total = result.rows.length ? Number(result.rows[0].total) : Number((await this.pool.query(
+      'SELECT COUNT(*)::int AS count FROM "AnalysisRun" WHERE "propertyId"=$1', [propertyId])).rows[0]?.count ?? 0);
+    return { items, total, page, pageSize, latestOffer: latest.find(item => item.mode === 'OFFER') ?? null,
+      latestListing: latest.find(item => item.mode === 'LISTING') ?? null };
+  }
+
+  private async expire(column: 'id' | 'propertyId', value: string): Promise<void> {
+    await this.pool.query(`UPDATE "AnalysisRun" SET "status"='FAILED', "failureCode"='INTERRUPTED', "completedAt"=CURRENT_TIMESTAMP
+      WHERE "${column}"=$1 AND "status"='RUNNING' AND "createdAt" < CURRENT_TIMESTAMP - INTERVAL '45 seconds'`, [value]);
   }
 
   async finish(id: string, update: { status: 'SUCCEEDED' | 'FAILED'; aiResult: AnalysisRun['aiResult']; failureCode: string | null;
@@ -77,7 +108,7 @@ export class PgAnalysisRepository implements AnalysisRepository {
       "tokenUsage"=$5::jsonb,"latencyMs"=$6,"completedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "status"='RUNNING' RETURNING *`,
     [id, update.status, update.aiResult ? JSON.stringify(update.aiResult) : null, update.failureCode,
       update.tokenUsage ? JSON.stringify(update.tokenUsage) : null, update.latencyMs]);
-    if (!result.rows[0]) throw new Error('ANALYSIS_WRITE_FAILED');
+    if (!result.rows[0]) throw new PropertyError('ANALYSIS_WRITE_FAILED', 503);
     return fromRow(result.rows[0]);
   }
 }

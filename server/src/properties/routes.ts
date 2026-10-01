@@ -1,5 +1,5 @@
 import { Router, type Request } from 'express';
-import { ListPropertiesQuery, PricingPreviewRequest, PropertyId, PropertyPatchInput, ResolvePropertyInput } from '@ppi/shared';
+import { AnalysisListQuery, ListPropertiesQuery, PricingPreviewRequest, PropertyId, PropertyPatchInput, ResolvePropertyInput } from '@ppi/shared';
 import { PropertyError, type PropertyService } from './service.js';
 import type { MarketEvidenceService } from '../market/service.js';
 import type { AssignedSchoolsService } from '../context/schools.js';
@@ -56,9 +56,11 @@ export function propertyRouter(service: PropertyService, market?: MarketEvidence
     });
     router.get('/:id/analyses', async (req, res) => {
       const id = idFrom(req);
+      const query = AnalysisListQuery.safeParse(req.query);
+      if (!query.success) throw new PropertyError('INVALID_QUERY', 400);
       await service.get(id);
       res.setHeader('Cache-Control', 'no-store, max-age=0');
-      res.json(await analyses.list(id));
+      res.json(query.data.summary ? await analyses.listSummaries(id, query.data.page, query.data.pageSize) : await analyses.list(id));
     });
   }
   router.patch('/:id', async (req, res) => {

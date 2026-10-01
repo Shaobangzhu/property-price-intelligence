@@ -24,7 +24,7 @@ function setup() {
   const search = vi.fn(async (kind: MarketEvidenceKind, input: MarketQuery) => normalizeMarketResponse(kind === 'RECORDED_SALES' ? [sale] : [listing], kind, input, subject));
   const provider = { name: 'RENTCAST' as const, search };
   const service = new MarketEvidenceService(properties, repository, provider, undefined, () => now);
-  return { service, search, repository, snapshots, advance: (hours: number) => { now = new Date(now.getTime() + hours * 3_600_000); } };
+  return { service, search, properties, repository, snapshots, advance: (hours: number) => { now = new Date(now.getTime() + hours * 3_600_000); } };
 }
 
 describe('market evidence semantics and cache', () => {
@@ -44,6 +44,16 @@ describe('market evidence semantics and cache', () => {
     expect(normalizeMarketResponse([{ ...sale, latitude: 31 }], 'RECORDED_SALES', query, subject)).toHaveLength(0);
   });
 
+  it('excludes the subject despite street/unit abbreviation differences while retaining other units', () => {
+    const apartment = { ...subject, providerPropertyId: null, formattedAddress: '123 Main St, Apt 2, Austin, TX 78701' };
+    const rows = [
+      { ...sale, id: 'subject-variant', formattedAddress: '123 MAIN STREET, APARTMENT 2, AUSTIN, TX 78701' },
+      { ...sale, id: 'other-unit', formattedAddress: '123 Main Street, Apartment 3, Austin, TX 78701' }
+    ];
+    expect(normalizeMarketResponse(rows, 'RECORDED_SALES', query, apartment).map(row => row.providerId)).toEqual(['other-unit']);
+    expect(normalizeMarketResponse([{ ...listing, formattedAddress: '123 Main Street, Apartment 2, Austin, TX 78701' }], 'ACTIVE_LISTINGS', query, apartment)).toEqual([]);
+  });
+
   it('applies independent seven-day and 24-hour policies, then preserves stale timestamps on provider failure', async () => {
     const { service, search, repository, advance } = setup();
     const initial = await service.get(id);
@@ -58,6 +68,15 @@ describe('market evidence semantics and cache', () => {
     expect(next.activeListings.cacheStatus).toBe('STALE_FALLBACK');
     expect(next.activeListings.fetchedAt).toBe(initial.activeListings.fetchedAt);
     expect(repository.save).toHaveBeenCalledTimes(2);
+  });
+
+  it('queries the captured analysis subject without re-reading refreshed coordinates', async () => {
+    const { service, search, properties } = setup();
+    const captured = { id, ...subject, latitude: 30.09 };
+    await service.getForSubject(captured);
+    expect(properties.findById).not.toHaveBeenCalled();
+    expect(search).toHaveBeenCalledTimes(2);
+    for (const call of search.mock.calls) expect(call[1].latitude).toBe(captured.latitude);
   });
 
   it('uses two bounded RentCast requests with no offset, retries, or raw payload exposure', async () => {

@@ -35,6 +35,7 @@ function pointQuery(point: Point, outFields: string, returnGeometry = false): UR
     returnGeometry: String(returnGeometry), resultRecordCount: returnGeometry ? '500' : '5' });
 }
 function features(payload: unknown): Json[] {
+  if (object(payload)?.exceededTransferLimit === true) throw new Error('TRUNCATED_GIS_FEATURES');
   const value = object(payload)?.features;
   if (!Array.isArray(value)) throw new Error('GIS_FEATURES');
   const parsed = value.map(object);

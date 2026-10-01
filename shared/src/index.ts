@@ -198,5 +198,15 @@ export const AnalysisRun = z.object({
 export type AnalysisRun = z.infer<typeof AnalysisRun>;
 export const AnalysisListResponse = z.object({ items: z.array(AnalysisRun), total: z.number().int().nonnegative() });
 export type AnalysisListResponse = z.infer<typeof AnalysisListResponse>;
+export const AnalysisSummary = AnalysisRun.pick({ id: true, propertyId: true, mode: true, status: true,
+  strategyProfile: true, engineVersion: true, promptVersion: true, model: true, reasoningEffort: true,
+  createdAt: true, completedAt: true, failureCode: true }).extend({ suggestedPrice: z.number().finite().nonnegative().nullable() });
+export type AnalysisSummary = z.infer<typeof AnalysisSummary>;
+export const AnalysisSummaryListResponse = z.object({ items: z.array(AnalysisSummary), total: z.number().int().nonnegative(),
+  page: z.number().int().positive(), pageSize: z.number().int().positive().max(100),
+  latestOffer: AnalysisSummary.nullable(), latestListing: AnalysisSummary.nullable() });
+export type AnalysisSummaryListResponse = z.infer<typeof AnalysisSummaryListResponse>;
+export const AnalysisListQuery = z.object({ summary: z.literal('true').optional(),
+  page: z.coerce.number().int().positive().max(100000).default(1), pageSize: z.coerce.number().int().positive().max(100).default(20) }).strict();
 export { calculatePricing, ENGINE_VERSION, PRICING_CONFIG_V1 } from './pricing.js';
 export type { PricingInput, PricingEngineResult, PricingConfig, IncludedComparable, ExcludedComparable } from './pricing.js';

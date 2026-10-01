@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { MarketContextResponse, MarketEvidenceGroup, MarketEvidenceKind, MarketQuery } from '@ppi/shared';
-import type { PropertyRepository } from '../properties/repository.js';
+import type { PropertyRepository, StoredProperty } from '../properties/repository.js';
 import { PropertyError } from '../properties/service.js';
 import { ProviderError } from '../properties/provider.js';
 import type { MarketEvidenceProvider } from './provider.js';
@@ -9,6 +9,7 @@ import type { EvidenceSnapshot, MarketRepository } from './repository.js';
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export type MarketPolicy = { radiusMiles: number; resultLimit: number; saleDateRangeDays: number; salesTtlHours: number; listingsTtlHours: number };
 export const DEFAULT_MARKET_POLICY: MarketPolicy = { radiusMiles: 2, resultLimit: 25, saleDateRangeDays: 365, salesTtlHours: 168, listingsTtlHours: 24 };
+type MarketSubject = Pick<StoredProperty, 'id' | 'latitude' | 'longitude' | 'providerPropertyId' | 'formattedAddress'>;
 export function parseMarketPolicy(env: NodeJS.ProcessEnv): MarketPolicy {
   const bounded = (name: string, fallback: number, min: number, max: number) => {
     const raw = env[name];
@@ -40,7 +41,11 @@ export class MarketEvidenceService {
   async get(propertyId: string): Promise<MarketContextResponse> {
     const record = await this.properties.findById(propertyId);
     if (!record) throw new PropertyError('PROPERTY_NOT_FOUND', 404);
-    const { latitude, longitude, providerPropertyId, formattedAddress } = record.property;
+    return this.getForSubject(record.property);
+  }
+
+  async getForSubject(property: MarketSubject): Promise<MarketContextResponse> {
+    const { id: propertyId, latitude, longitude, providerPropertyId, formattedAddress } = property;
     if (latitude === null || longitude === null) {
       const unavailable = (kind: MarketEvidenceKind): MarketEvidenceGroup => ({ kind, candidates: [], source: null,
         freshness: 'UNAVAILABLE', cacheStatus: 'NO_COORDINATES', fetchedAt: null, expiresAt: null, query: null, errorCode: 'SUBJECT_COORDINATES_MISSING' });

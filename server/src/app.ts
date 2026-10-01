@@ -19,6 +19,16 @@ export function createApp(options: { checkDatabase: CheckDatabase; origins: stri
   app.disable('x-powered-by');
   app.use(helmet());
   app.use((req, res, next) => { res.locals.requestId = randomUUID(); res.setHeader('x-request-id', res.locals.requestId); next(); });
+  app.use((req, _res, next) => {
+    const origin = req.get('Origin');
+    const fetchSite = req.get('Sec-Fetch-Site');
+    // CORS alone prevents reading a response, but still permits simple requests
+    // that could invoke a paid provider. Reject those before routing the request.
+    const untrustedOrigin = origin !== undefined && !options.origins.includes(origin);
+    const untrustedBrowserRequest = origin === undefined && (fetchSite === 'cross-site' || fetchSite === 'same-site');
+    if (untrustedOrigin || untrustedBrowserRequest) throw new PropertyError('REQUEST_ORIGIN_NOT_ALLOWED', 403);
+    next();
+  });
   app.use(cors({ origin: options.origins }));
   app.use(express.json({ limit: '32kb' }));
   app.get('/api/health/live', (_req, res) => res.json({ status: 'live', requestId: res.locals.requestId }));

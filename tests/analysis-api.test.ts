@@ -14,6 +14,7 @@ function setup() {
   const analyses = {
     create: vi.fn().mockResolvedValue({ id: analysisId, status: 'SUCCEEDED' }),
     list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    listSummaries: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 }),
     get: vi.fn().mockResolvedValue({ id: analysisId, status: 'SUCCEEDED' }),
     regenerate: vi.fn().mockResolvedValue({ id: analysisId, status: 'SUCCEEDED' })
   };
@@ -56,5 +57,14 @@ describe('analysis API', () => {
     const absent = await request(app).get(`/api/analyses/${analysisId}`);
     expect(absent.status).toBe(404);
     expect(JSON.stringify(absent.body)).not.toContain('OPENAI_API_KEY');
+  });
+  it('validates bounded summary pagination and leaves full snapshots to exact reads', async () => {
+    const { app, analyses } = setup();
+    expect((await request(app).get(`/api/properties/${propertyId}/analyses?summary=true&page=2&pageSize=5`)).status).toBe(200);
+    expect(analyses.listSummaries).toHaveBeenCalledWith(propertyId, 2, 5);
+    expect(analyses.list).not.toHaveBeenCalled();
+    for (const query of ['summary=true&pageSize=101', 'summary=true&page=0', 'summary=false', 'unexpected=1']) {
+      expect((await request(app).get(`/api/properties/${propertyId}/analyses?${query}`)).status).toBe(400);
+    }
   });
 });

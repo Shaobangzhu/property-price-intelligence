@@ -40,7 +40,7 @@ The startup order is `npm run db:up`, `npm run db:check`, `npm run db:migrate`, 
 
 ## Prisma
 
-Prisma 6.12.0 defines `Property` and `DataSnapshot` and tracks forward migrations in `prisma/migrations`. `npm run prisma:validate` checks schema syntax; `npm run db:migrate` applies pending migrations without resetting data. Runtime queries use the existing `pg` pool and target the same schema. No native PostgreSQL server is used.
+Prisma 6.12.0 defines `Property`, `DataSnapshot`, and versioned `AnalysisRun` records and tracks forward migrations in `prisma/migrations`. `npm run prisma:validate` checks schema syntax; `npm run db:migrate` applies pending migrations without resetting data. Runtime queries use the existing `pg` pool and target the same schema. No native PostgreSQL server is used. `npm run audit:database` verifies applied migration names and checks persisted JSON for known Places keys in a read-only transaction, printing only PASS/FAIL. This heuristic complements the provider allowlists and regression tests; it is not a content-provenance proof.
 
 ## Troubleshooting
 

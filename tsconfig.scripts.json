@@ -1,1 +1,1 @@
-{ "extends": "./tsconfig.base.json", "compilerOptions": { "noEmit": true }, "include": ["scripts/smoke/**/*.ts", "scripts/eval/**/*.ts"] }
+{ "extends": "./tsconfig.base.json", "compilerOptions": { "noEmit": true }, "include": ["scripts/smoke/**/*.ts", "scripts/eval/**/*.ts", "scripts/demo/**/*.ts", "tests/e2e/**/*.ts", "playwright.config.ts"] }

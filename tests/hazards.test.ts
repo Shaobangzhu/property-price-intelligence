@@ -34,6 +34,13 @@ describe('official wildfire context', () => {
     const result = await failed.getWildfire(id);
     expect(result).toMatchObject({ status: 'UNAVAILABLE', sourceName: 'CAL FIRE Fire Hazard Severity Zones', checkedAt: '2026-09-29T12:00:00.000Z' });
   });
+
+  it('does not treat truncated wildfire evidence as a complete coverage result', async () => {
+    const wildfire = new CalFireWildfireProvider({ query: async () => ({ features: [], exceededTransferLimit: true }) });
+    const service = new HazardContextService(repository(), wildfire,
+      { check: async () => ({ status: 'NO_NEARBY_FEATURES', nearestFeatureName: null, distanceMiles: null }) });
+    expect((await service.getWildfire(id)).status).toBe('UNAVAILABLE');
+  });
 });
 
 describe('CGS mapped fault traces', () => {

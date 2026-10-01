@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { MarketComparableCandidate, type MarketEvidenceKind, type MarketQuery } from '@ppi/shared';
 import { ProviderError } from '../properties/provider.js';
+import { normalizeAddressIdentity } from '../properties/address.js';
 
 type Subject = { providerPropertyId: string | null; formattedAddress: string; latitude: number; longitude: number };
 export interface MarketEvidenceProvider {
@@ -20,7 +21,7 @@ const str = (value: unknown, max = 250): string | null => typeof value === 'stri
 const num = (value: unknown, min: number, max: number): number | null => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : null;
 const int = (value: unknown, min: number, max: number): number | null => { const result = num(value, min, max); return result !== null && Number.isInteger(result) ? result : null; };
 const date = (value: unknown): string | null => { const valueText = str(value, 40); return valueText && !Number.isNaN(Date.parse(valueText)) ? new Date(valueText).toISOString() : null; };
-const addressKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+const addressKey = normalizeAddressIdentity;
 
 export function normalizeMarketResponse(value: unknown, kind: MarketEvidenceKind, query: MarketQuery, subject: Subject): MarketComparableCandidate[] {
   if (!Array.isArray(value) || value.length > query.limit) throw new ProviderError('MALFORMED');

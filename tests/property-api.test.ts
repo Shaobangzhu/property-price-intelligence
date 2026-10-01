@@ -28,6 +28,31 @@ function setup() {
 }
 
 describe('property REST routes', () => {
+  it.each([
+    ['https://untrusted.example', 'cross-site'], ['http://localhost:5174', 'same-site'], ['null', 'cross-site'],
+    [null, 'cross-site'], [null, 'same-site']
+  ])('blocks untrusted browser requests before provider work (%s, %s)', async (origin, fetchSite) => {
+    const { app, service, groceryService } = setup();
+    const grocery = request(app).get(`/api/properties/${id}/nearby-places?category=grocery`).set('Sec-Fetch-Site', fetchSite!);
+    const resolve = request(app).post('/api/properties/resolve').set('Sec-Fetch-Site', fetchSite!).send({ address: '123 Main St, Austin, TX 78701' });
+    if (origin !== null) { grocery.set('Origin', origin!); resolve.set('Origin', origin!); }
+    for (const response of await Promise.all([grocery, resolve])) {
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe('REQUEST_ORIGIN_NOT_ALLOWED');
+    }
+    expect(groceryService.get).not.toHaveBeenCalled();
+    expect(service.resolve).not.toHaveBeenCalled();
+  });
+
+  it('allows the configured browser origin, same-origin proxy requests, and local CLI requests', async () => {
+    const { app, groceryService } = setup();
+    const path = `/api/properties/${id}/nearby-places?category=grocery`;
+    expect((await request(app).get(path).set('Origin', 'http://localhost:5173').set('Sec-Fetch-Site', 'cross-site')).status).toBe(200);
+    expect((await request(app).get(path).set('Sec-Fetch-Site', 'same-origin')).status).toBe(200);
+    expect((await request(app).get(path)).status).toBe(200);
+    expect(groceryService.get).toHaveBeenCalledTimes(3);
+  });
+
   it('validates input and keeps provider-owned fields out of PATCH', async () => {
     const { app, service } = setup();
     expect((await request(app).post('/api/properties/resolve').send({ address: 'short' })).status).toBe(400);

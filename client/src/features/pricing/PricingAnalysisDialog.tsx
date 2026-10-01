@@ -24,11 +24,14 @@ function PriceScale({ reference, recommended, suggested }: { reference: [number,
 
 export function PricingAnalysisDialog({ property, mode, historicalRun, onClose, onResult, onSaved }: {
   property: PropertyEnvelope; mode: AnalysisMode; historicalRun?: AnalysisRun; onClose: () => void;
-  onResult?: (result: PricingPreviewResponse) => void; onSaved?: () => void;
+  onResult?: (result: PricingPreviewResponse) => void; onSaved?: (run: AnalysisRun) => void;
 }) {
   const titleId = useId(), descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null), closeRef = useRef<HTMLButtonElement>(null), onCloseRef = useRef(onClose);
   const onResultRef = useRef(onResult), onSavedRef = useRef(onSaved), pending = useRef(false), mounted = useRef(true);
+  const requestRef = useRef<AbortController | null>(null);
+  const retryIdentity = useRef<{ signature: string; key: string } | null>(null);
+  const retryRegeneration = useRef(false);
   onCloseRef.current = onClose; onResultRef.current = onResult; onSavedRef.current = onSaved;
   const [strategy, setStrategy] = useState<string>(historicalRun?.strategyProfile ?? 'BALANCED');
   const [budget, setBudget] = useState(historicalRun?.userInputs.mode === 'OFFER' ? String(historicalRun.userInputs.maxBudget ?? '') : '');
@@ -52,33 +55,69 @@ export function PricingAnalysisDialog({ property, mode, historicalRun, onClose, 
       else if (!event.shiftKey && (document.activeElement === last || !dialogRef.current?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', onKeyDown);
-    return () => { mounted.current = false; document.removeEventListener('keydown', onKeyDown); document.body.style.overflow = previousOverflow; opener?.focus(); };
+    return () => { mounted.current = false; requestRef.current?.abort(); pending.current = false; document.removeEventListener('keydown', onKeyDown); document.body.style.overflow = previousOverflow; if (opener?.isConnected) opener.focus(); };
   }, []);
 
-  const settle = async (value: AnalysisRun) => {
+  const settle = async (value: AnalysisRun, controller: AbortController) => {
     let current = value;
-    for (let attempt = 0; current.status === 'RUNNING' && attempt < 15 && mounted.current; attempt++) {
+    const active = () => mounted.current && !controller.signal.aborted && requestRef.current === controller;
+    if (!active()) return;
+    // Show saved deterministic values even when a later status poll fails.
+    setRun(current); onResultRef.current?.(current.engineResult);
+    for (let attempt = 0; current.status === 'RUNNING' && attempt < 15 && active(); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      if (!mounted.current) return;
-      current = await getAnalysis(current.id);
+      if (!active()) return;
+      current = await getAnalysis(current.id, controller.signal);
+      if (current.propertyId !== property.property.id || current.mode !== mode) throw new Error('ANALYSIS_IDENTITY_MISMATCH');
     }
-    if (mounted.current) { setRun(current); setStatus('ready'); onResultRef.current?.(current.engineResult); onSavedRef.current?.(); }
+    if (active()) { setRun(current); setStatus('ready'); onResultRef.current?.(current.engineResult); onSavedRef.current?.(current); }
   };
   const generate = async (regenerate = false) => {
     if (pending.current) return;
+    retryRegeneration.current = regenerate;
     const maxBudget = budget.trim() ? Number(budget) : null;
     if (isOffer && maxBudget !== null && (!Number.isFinite(maxBudget) || maxBudget <= 0 || maxBudget > 1_000_000_000)) { setStatus('error'); return; }
+    const payload: PricingPreviewRequest = isOffer
+      ? { mode: 'OFFER', strategyProfile: strategy as typeof offerProfiles[number], maxBudget }
+      : { mode: 'LISTING', strategyProfile: strategy as typeof listingProfiles[number] };
+    const signature = JSON.stringify({ propertyId: property.property.id, payload, regenerate: regenerate ? run?.id : null });
+    if (retryIdentity.current?.signature !== signature) retryIdentity.current = { signature, key: crypto.randomUUID() };
+    const key = retryIdentity.current.key;
+    const controller = new AbortController();
+    requestRef.current = controller;
     pending.current = true; setStatus('loading');
     try {
-      const value = regenerate && run ? await regenerateAnalysis(run.id, crypto.randomUUID()) :
-        await createAnalysis(property.property.id, isOffer
-          ? { mode: 'OFFER', strategyProfile: strategy as typeof offerProfiles[number], maxBudget }
-          : { mode: 'LISTING', strategyProfile: strategy as typeof listingProfiles[number] }, crypto.randomUUID());
-      await settle(value);
-    } catch { if (mounted.current) setStatus('error'); }
-    finally { pending.current = false; }
+      const value = regenerate && run ? await regenerateAnalysis(run.id, key, controller.signal) :
+        await createAnalysis(property.property.id, payload, key, controller.signal);
+      if (value.propertyId !== property.property.id || value.mode !== mode) throw new Error('ANALYSIS_IDENTITY_MISMATCH');
+      await settle(value, controller);
+      if (!controller.signal.aborted) retryIdentity.current = null;
+    } catch { if (mounted.current && !controller.signal.aborted && requestRef.current === controller) setStatus('error'); }
+    finally { if (requestRef.current === controller) pending.current = false; }
   };
-  useEffect(() => { if (!historicalRun) void generate(); }, []);
+  const checkStatus = async () => {
+    if (!run || pending.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller; pending.current = true; setStatus('loading');
+    try { await settle(run, controller); }
+    catch { if (!controller.signal.aborted) setStatus('error'); }
+    finally { if (requestRef.current === controller) pending.current = false; }
+  };
+  useEffect(() => {
+    // Defer the initial request until effect setup is stable, including StrictMode's cleanup/replay.
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      if (!historicalRun) void generate();
+      else if (historicalRun.status === 'RUNNING') {
+        const controller = new AbortController();
+        requestRef.current = controller; pending.current = true; setStatus('loading');
+        void settle(historicalRun, controller).catch(() => { if (!controller.signal.aborted) setStatus('error'); })
+          .finally(() => { if (requestRef.current === controller) pending.current = false; });
+      }
+    });
+    return () => { active = false; };
+  }, []);
 
   const desired: PricingPreviewRequest = isOffer ? { mode: 'OFFER', strategyProfile: strategy as typeof offerProfiles[number], maxBudget: budget.trim() ? Number(budget) : null }
     : { mode: 'LISTING', strategyProfile: strategy as typeof listingProfiles[number] };
@@ -93,7 +132,7 @@ export function PricingAnalysisDialog({ property, mode, historicalRun, onClose, 
         {isOffer && <label>Maximum budget (optional)<input aria-label="Maximum budget" type="number" min="1" max="1000000000" step="100" value={budget} disabled={!!historicalRun || status === 'loading'} onChange={event => setBudget(event.target.value)} placeholder="No limit" /></label>}
         {!historicalRun && <button className="button button-outline" type="button" disabled={status === 'loading' || !settingsChanged} onClick={() => void generate()}>Generate analysis</button>}</div>
       {status === 'loading' && <FeedbackState kind="loading" title="Generating analysis" message="Calculating the price and requesting an AI-assisted explanation." compact />}
-      {status === 'error' && <><FeedbackState kind="error" title="Analysis request unavailable" message="Check the budget or retry the analysis request. Existing saved results remain available." compact /><button className="button button-outline" type="button" onClick={() => void generate()}>Retry analysis</button></>}
+      {status === 'error' && <><FeedbackState kind="error" title="Analysis request unavailable" message="Check the budget or retry the analysis request. Existing saved results remain available." compact /><button className="button button-outline" type="button" onClick={() => void (run?.status === 'RUNNING' ? checkStatus() : generate(retryRegeneration.current))}>Retry analysis</button></>}
       {run && result && <>
         <div className="analysis-summary-row"><div><span>List Price at Analysis</span><strong>{money(snapshotSubject?.subject?.currentListPrice ?? null)}</strong></div><div><span>Market Reference Range</span><strong>{range(result.referenceRange)}</strong></div><div><span>{isOffer ? 'Recommended Offer Range' : 'Recommended Listing Range'}</span><strong>{range(strategyResult?.recommendedRange ?? null)}</strong></div><div className="highlight-summary"><span>{isOffer ? 'Suggested Offer' : 'Suggested Listing Price'}</span><strong>{money(strategyResult?.suggestedPrice ?? null)}</strong></div></div>
         <p className="pricing-meta">Price calculated by PPI pricing engine; explanation AI-assisted. {result.engineVersion} · {label(result.evidenceQuality)} evidence · saved {dateTime(run.createdAt)}</p>
@@ -109,6 +148,6 @@ export function PricingAnalysisDialog({ property, mode, historicalRun, onClose, 
         <p className="pricing-meta">Run {run.id} · {run.status.toLowerCase()} · {run.model} · {run.promptVersion}</p>
       </>}
     </div>
-    <footer className="dialog-actions"><span>{run ? `Saved ${dateTime(run.createdAt)}` : 'Preparing saved analysis'}</span><div>{run && run.status !== 'RUNNING' && <button type="button" className="button button-outline" disabled={status === 'loading' || settingsChanged} onClick={() => void generate(true)}>Regenerate explanation</button>}<button type="button" className="button button-quiet" onClick={onClose}>Close</button></div></footer>
+    <footer className="dialog-actions"><span>{run ? `Saved ${dateTime(run.createdAt)}` : 'Preparing saved analysis'}</span><div>{run?.status === 'RUNNING' && <button type="button" className="button button-outline" disabled={status === 'loading'} onClick={() => void checkStatus()}>Check analysis status</button>}{run && run.status !== 'RUNNING' && <button type="button" className="button button-outline" disabled={status === 'loading' || settingsChanged} onClick={() => void generate(true)}>Regenerate explanation</button>}<button type="button" className="button button-quiet" onClick={onClose}>Close</button></div></footer>
   </div></div>, document.body);
 }

@@ -137,16 +137,22 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
             geometry: { type: 'point', latitude: marker.latitude, longitude: marker.longitude },
             symbol: { type: 'simple-marker', style: marker.kind === 'school' ? 'triangle' : 'circle', size: marker.id === contextData.current.selectedContextId ? 20 : 14,
               color: marker.kind === 'school' ? '#7552a3' : '#bf5268', outline: { color: marker.id === contextData.current.selectedContextId ? '#172b43' : '#fff', width: marker.id === contextData.current.selectedContextId ? 3 : 1.5 } },
-            attributes: { id: marker.id, context: true }, popupTemplate: popup(marker.label, marker.detail)
+            attributes: { id: marker.id, context: true }, popupTemplate: popup(marker.kind === 'school' ? 'Assigned school' : 'Grocery place', `${marker.label} · ${marker.detail}`)
           }));
         };
         redrawContext.current = drawContext;
         drawContext();
         const click = view.on('click', event => {
+          const clickedContext = activeContextRef.current;
           void view.hitTest(event, { include: [contextLayer, salesLayer, listingsLayer] }).then(result => {
+            if (disposed) return;
             const graphic = result.results.find(hit => 'graphic' in hit)?.graphic;
             const id = graphic?.attributes?.id;
-            if (typeof id === 'string') { if (graphic?.attributes?.context === true) selectContext.current(id); else select.current(id); }
+            if (typeof id === 'string') {
+              if (graphic?.attributes?.context === true) {
+                if (clickedContext === activeContextRef.current && contextData.current.contextMarkers.some(marker => marker.id === id)) selectContext.current(id);
+              } else if (data.current.candidates.some(candidate => candidate.id === id)) select.current(id);
+            }
           }).catch(() => {});
         });
         let layerFailed = false;
@@ -166,7 +172,7 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
     return () => { disposed = true; destroy?.(); syncGovernment.current = null; redraw.current = null; redrawContext.current = null; };
   }, []);
 
-  if (testMode) return <div className="map-test-mode" aria-label="Map test mode">{governmentLayerSpecs(activeContext).map(spec => <span key={spec.url} data-testid="government-overlay">{spec.title}</span>)}{candidates.filter(item => item.latitude !== null && item.longitude !== null).map(item =>
+  if (testMode) return <div className="map-test-mode" aria-label="Map test mode"><span role="img" aria-label={`Subject property marker: ${subject.formattedAddress}`}>Subject Property</span>{governmentLayerSpecs(activeContext).map(spec => <span key={spec.url} data-testid="government-overlay">{spec.title}</span>)}{candidates.filter(item => item.latitude !== null && item.longitude !== null).map(item =>
     <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}>{item.evidenceType === 'RECORDED_SALE' ? 'Recorded sale marker' : 'Active listing marker'}: {item.address}</button>)}{contextMarkers.map(marker =>
     <button type="button" key={`context:${marker.id}`} aria-pressed={selectedContextId === marker.id} onClick={() => onSelectContext(marker.id)}>{marker.kind === 'school' ? 'Assigned school marker' : 'Grocery marker'}: {marker.label}</button>)}</div>;
   return <div className="map-canvas arcgis-canvas" aria-label="ArcGIS property map"><div ref={container} className="arcgis-view" />{status !== 'ready' && <div className="map-fallback" role="status">{status === 'loading' ? 'Loading ArcGIS map…' : 'Map unavailable. Property and market evidence remain available.'}</div>}{overlayUnavailable && status === 'ready' && <div className="map-overlay-notice" role="status">Selected government map overlay unavailable. Property markers remain visible.</div>}</div>;
