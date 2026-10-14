@@ -24,7 +24,7 @@ function assignmentFields(records: Record<string, unknown>[]): string[] {
 }
 
 export type ZillapiRequestMetadata = {
-  endpoint: 'BY_ADDRESS' | 'SCHOOLS'; httpStatus: number | null; creditsCharged: number | null;
+  endpoint: 'BY_ADDRESS' | 'SCHOOLS'; httpStatus: number | null; creditsCharged: number | null; durationMs: number;
 };
 export type ZillapiDiagnostic = {
   cacheHit: boolean; requestCount: number; requests: ZillapiRequestMetadata[];
@@ -39,6 +39,8 @@ export class ZillapiError extends Error {
 }
 
 const MAX_BYTES = 256 * 1024;
+// The authorized address diagnostic took ~24s; allow headroom for upstream work.
+export const ZILLAPI_REQUEST_TIMEOUT_MS = 60_000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_LIMIT = 32;
 function credits(response: Response): number | null {
@@ -117,9 +119,10 @@ export class ZillapiClient {
 
   private async request(url: URL, endpoint: ZillapiRequestMetadata['endpoint'], requests: ZillapiRequestMetadata[]): Promise<unknown> {
     if (requests.length >= 2 || url.origin !== 'https://api.zillapi.com') throw new ZillapiError('CONFIGURATION', requests);
-    const metadata: ZillapiRequestMetadata = { endpoint, httpStatus: null, creditsCharged: null };
+    const metadata: ZillapiRequestMetadata = { endpoint, httpStatus: null, creditsCharged: null, durationMs: 0 };
     requests.push(metadata);
-    const signal = AbortSignal.timeout(8000);
+    const started = performance.now();
+    const signal = AbortSignal.timeout(ZILLAPI_REQUEST_TIMEOUT_MS);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let bodyStream: ReadableStream<Uint8Array> | null = null;
     try {
@@ -152,6 +155,7 @@ export class ZillapiClient {
         : error instanceof ZillapiError ? error.code : 'UPSTREAM';
       throw new ZillapiError(code, requests);
     } finally {
+      metadata.durationMs = Math.round(performance.now() - started);
       if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
       else if (bodyStream) void bodyStream.cancel().catch(() => {});
     }

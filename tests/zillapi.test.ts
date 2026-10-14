@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ZillapiClient, ZillapiError } from '../server/src/context/zillapi.js';
+import { ZillapiClient, ZillapiError, ZILLAPI_REQUEST_TIMEOUT_MS } from '../server/src/context/zillapi.js';
 import { runZillapiSmoke } from '../scripts/smoke/zillapi.js';
 
 // Entirely synthetic, not copied from a provider response or a user's property.
@@ -38,7 +38,7 @@ describe('Zillapi isolated diagnostic', () => {
     expect(url.hash).toBe('');
     expect(url.href).not.toContain(key);
     expect(init).toMatchObject({ method: 'GET', redirect: 'error', headers: { Authorization: `Bearer ${key}` }, signal: expect.any(AbortSignal) });
-    expect(result).toEqual({ cacheHit: false, requestCount: 1, requests: [{ endpoint: 'BY_ADDRESS', httpStatus: 200, creditsCharged: null }],
+    expect(result).toEqual({ cacheHit: false, requestCount: 1, requests: [{ endpoint: 'BY_ADDRESS', httpStatus: 200, creditsCharged: null, durationMs: expect.any(Number) }],
       hasZpid: true, hasSchoolRecords: true, assignmentRelatedFields: [], semanticsVerified: false });
     expect(JSON.stringify(result)).not.toMatch(/Synthetic School|discard|123456|Example|synthetic-server-secret/);
     expect(transport).toHaveBeenCalledTimes(1);
@@ -120,10 +120,50 @@ describe('Zillapi isolated diagnostic', () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('applies an eight-second abort deadline to fetch', async () => {
+  it('applies the bounded Zillapi abort deadline to fetch', async () => {
+    expect(ZILLAPI_REQUEST_TIMEOUT_MS).toBe(60_000);
     const signal = vi.spyOn(AbortSignal, 'timeout');
     await new ZillapiClient(key, transportFor({ data: { ...property, schools: [] } })).inspectSchools(address);
-    expect(signal).toHaveBeenCalledWith(8000);
+    expect(signal).toHaveBeenCalledWith(ZILLAPI_REQUEST_TIMEOUT_MS);
+  });
+
+  it('allows a response beyond the former eight-second deadline without retrying', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('Deadline exceeded', 'TimeoutError')), milliseconds);
+        return controller.signal;
+      });
+      const transport = vi.fn<typeof fetch>((_input, init) => new Promise((resolve, reject) => {
+        init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+        setTimeout(() => resolve(Response.json({ data: { ...property, schools: [] } })), 12_000);
+      }));
+      const pending = new ZillapiClient(key, transport).inspectSchools(address);
+      const completed = expect(pending).resolves.toMatchObject({ requestCount: 1, requests: [{ httpStatus: 200, durationMs: expect.any(Number) }] });
+      await vi.advanceTimersByTimeAsync(12_000);
+      await completed;
+      expect(transport).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('still aborts at the configured deadline and reports elapsed time without retrying', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('Deadline exceeded', 'TimeoutError')), milliseconds);
+        return controller.signal;
+      });
+      const transport = vi.fn<typeof fetch>((_input, init) => new Promise((_resolve, reject) => {
+        init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+      }));
+      const pending = new ZillapiClient(key, transport).inspectSchools(address);
+      const timedOut = expect(pending).rejects.toMatchObject({ code: 'TIMEOUT', requests: [{ httpStatus: null, durationMs: expect.any(Number) }] });
+      await vi.advanceTimersByTimeAsync(ZILLAPI_REQUEST_TIMEOUT_MS);
+      await timedOut;
+      expect(transport).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
 
   it('stops an in-flight request when its deadline aborts, without retry', async () => {
