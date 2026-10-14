@@ -102,6 +102,7 @@ export const NearbySchool = z.object({
   levelLabel: z.string().nullable(), schoolType: z.string().nullable(),
   rating: z.number().finite().min(0).max(10).nullable(),
   distanceMiles: z.number().finite().nonnegative().nullable(),
+  locationSource: z.literal('NCES_EDGE_2024_25').nullable().default(null),
   latitude: z.number().finite().min(-90).max(90).nullable(), longitude: z.number().finite().min(-180).max(180).nullable()
 });
 export type NearbySchool = z.infer<typeof NearbySchool>;

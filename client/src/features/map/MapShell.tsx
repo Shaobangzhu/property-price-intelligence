@@ -155,14 +155,31 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         };
         redraw.current = draw;
         draw();
+        let schoolFitKey = '';
         const drawContext = () => {
           contextLayer.removeAll();
-          for (const marker of contextData.current.contextMarkers) contextLayer.add(new Graphic({
+          const schoolGraphics: InstanceType<typeof Graphic>[] = [];
+          for (const marker of contextData.current.contextMarkers) {
+            const graphic = new Graphic({
             geometry: { type: 'point', latitude: marker.latitude, longitude: marker.longitude },
-            symbol: { type: 'simple-marker', style: marker.kind === 'school' ? 'triangle' : 'circle', size: marker.id === contextData.current.selectedContextId ? 20 : 14,
+            symbol: { type: 'simple-marker', style: 'circle', size: marker.id === contextData.current.selectedContextId ? 20 : 14,
               color: marker.kind === 'school' ? '#7552a3' : '#bf5268', outline: { color: marker.id === contextData.current.selectedContextId ? '#172b43' : '#fff', width: marker.id === contextData.current.selectedContextId ? 3 : 1.5 } },
             attributes: { id: marker.id, context: true }, popupTemplate: popup(marker.kind === 'school' ? 'Nearby school' : 'Grocery place', `${marker.label} · ${marker.detail}`)
-          }));
+            });
+            contextLayer.add(graphic);
+            if (marker.kind === 'school') schoolGraphics.push(graphic);
+          }
+          const key = activeContextRef.current === 'schools' && schoolGraphics.length
+            ? `${data.current.subject.id}:${JSON.stringify(contextData.current.contextMarkers)}` : '';
+          if (key && key !== schoolFitKey) {
+            const current = data.current.subject;
+            const targets = [...schoolGraphics];
+            if (current.latitude !== null && current.longitude !== null) targets.push(new Graphic({ geometry: { type: 'point', latitude: current.latitude, longitude: current.longitude } }));
+            void view.when().then(() => {
+              if (!disposed && schoolFitKey === key && activeContextRef.current === 'schools') return view.goTo(targets, { animate: false });
+            }).catch(() => { /* A view interruption must not remove school graphics. */ });
+          }
+          schoolFitKey = key;
         };
         redrawContext.current = drawContext;
         drawContext();

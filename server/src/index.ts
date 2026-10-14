@@ -8,6 +8,7 @@ import { PgMarketRepository } from './market/repository.js';
 import { RentCastMarketProvider } from './market/provider.js';
 import { MarketEvidenceService, parseMarketPolicy } from './market/service.js';
 import { NearbySchoolsService, createSchoolProvider } from './context/schools.js';
+import { NcesSchoolLocations } from './context/school-locations.js';
 import { ArcGisPlacesProvider, GroceryContextService, parseGroceryPolicy } from './context/grocery.js';
 import { CalFireWildfireProvider, CgsFaultProvider, HazardContextService } from './context/hazards.js';
 import { PricingPreviewService } from './pricing/service.js';
@@ -22,7 +23,7 @@ async function main() {
   const propertyRepository = new PgPropertyRepository(db.pool);
   const propertyService = new PropertyService(propertyRepository, new RentCastPropertyProvider(config.RENTCAST_API_KEY), undefined, parseProfileTtlDays(process.env));
   const marketService = new MarketEvidenceService(propertyRepository, new PgMarketRepository(db.pool), new RentCastMarketProvider(config.RENTCAST_API_KEY), parseMarketPolicy(process.env));
-  const schoolsService = new NearbySchoolsService(propertyRepository, createSchoolProvider(config));
+  const schoolsService = new NearbySchoolsService(propertyRepository, createSchoolProvider(config), new NcesSchoolLocations());
   const groceryService = new GroceryContextService(propertyRepository, new ArcGisPlacesProvider(config.ARCGIS_PLACES_API_KEY), parseGroceryPolicy(process.env));
   const hazardService = new HazardContextService(propertyRepository, new CalFireWildfireProvider(), new CgsFaultProvider());
   const pricingService = new PricingPreviewService(propertyService, marketService);

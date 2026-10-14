@@ -41,7 +41,7 @@ export function demoMarket(propertyId = DEMO_ID, insufficient = false): MarketCo
 
 export type MockOptions = {
   resolveFailure?: 'PROVIDER_UNAVAILABLE' | 'PROVIDER_MALFORMED' | 'DATABASE_UNAVAILABLE';
-  contextFailures?: boolean; aiFailure?: boolean; insufficient?: boolean;
+  contextFailures?: boolean; schoolLocations?: boolean; aiFailure?: boolean; insufficient?: boolean;
   beforeResponse?: (pathname: string, requestBody: unknown) => Promise<void>;
 };
 
@@ -109,7 +109,14 @@ export async function installMockApi(page: Page, options: MockOptions = {}, orig
       else { stats.analysisReads++; body = found; }
     } else if (!record) { status = 404; body = error('PROPERTY_NOT_FOUND'); }
     else if (url.pathname.endsWith('/market-context')) body = demoMarket(id, options.insufficient);
-    else if (url.pathname.endsWith('/nearby-schools')) body = { propertyId: id, status: options.contextFailures ? 'PROVIDER_ERROR' : 'NO_RESULTS', schools: [], source: null };
+    else if (url.pathname.endsWith('/nearby-schools')) body = options.schoolLocations && !options.contextFailures
+      ? { propertyId: id, status: 'AVAILABLE', source: 'ZILLAPI', schools: [
+        { id: 'school:synthetic-point', name: 'Synthetic School With Location', level: 'ELEMENTARY', levelLabel: 'Elementary', schoolType: 'public', rating: 7,
+          distanceMiles: 0.5, latitude: 37.855, longitude: -122.205, locationSource: 'NCES_EDGE_2024_25' },
+        { id: 'school:synthetic-unmatched', name: 'Synthetic Unmatched School', level: 'HIGH', levelLabel: 'High', schoolType: null, rating: null,
+          distanceMiles: 2, latitude: null, longitude: null, locationSource: null }
+      ] }
+      : { propertyId: id, status: options.contextFailures ? 'PROVIDER_ERROR' : 'NO_RESULTS', schools: [], source: null };
     else if (url.pathname.endsWith('/nearby-places')) body = { propertyId: id, status: options.contextFailures ? 'PROVIDER_ERROR' : 'AVAILABLE', source: 'ARCGIS_PLACES', radiusMeters: 1600,
       places: options.contextFailures ? [] : [{ id: 'synthetic-grocery', name: id === SECOND_ID ? 'Synthetic Crescent Grocery' : 'Synthetic Demo Grocery', category: 'Grocery Store', latitude: 37.853, longitude: -122.203, distanceMiles: 0.4, source: 'ARCGIS_PLACES' }] };
     else if (url.pathname.endsWith('/wildfire-context')) body = { propertyId: id, status: options.contextFailures ? 'UNAVAILABLE' : 'INSIDE_DISPLAYED_ZONE', classification: options.contextFailures ? null : 'High', responsibilityArea: options.contextFailures ? null : 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'Synthetic scenario; not a real parcel result', checkedAt: DEMO_NOW };

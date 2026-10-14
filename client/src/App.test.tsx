@@ -305,7 +305,7 @@ describe('Dashboard', () => {
     // Synthetic coordinate-backed fixture; Zillapi's documented school example has no coordinates.
     const schools = { propertyId: firstId, status: 'AVAILABLE', source: 'ZILLAPI', schools: [{ id: 'school:one',
       name: 'Oak Elementary', level: 'ELEMENTARY', levelLabel: 'Elementary', schoolType: 'public', rating: 7,
-      distanceMiles: 0.4, latitude: 30.11, longitude: -97.11 }] };
+      distanceMiles: 0.4, latitude: 30.11, longitude: -97.11, locationSource: 'NCES_EDGE_2024_25' }] };
     const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
     fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => String(input).includes('/nearby-schools')
       ? Promise.resolve(Response.json(schools))
@@ -316,6 +316,7 @@ describe('Dashboard', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Schools' }));
     fireEvent.click(screen.getByRole('button', { name: 'Recorded Sales' }));
     const schoolRow = await screen.findByRole('button', { name: 'Select nearby school Oak Elementary' });
+    expect(screen.getByText('School locations: NCES EDGE (2024–25 public school data).')).toBeTruthy();
     fireEvent.click(schoolRow);
     expect(screen.getByRole('button', { name: 'Nearby school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
     expect(schoolRow.getAttribute('aria-pressed')).toBe('true');

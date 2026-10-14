@@ -56,6 +56,27 @@ test('market layers default off, toggle independently by keyboard, and coexist w
   expect(mock.stats.completedApiRequests.filter(path => path.endsWith('/market-context'))).toHaveLength(1);
 });
 
+test('nearby school locations create selectable markers while unmatched schools remain list-only', async ({ page }) => {
+  const mock = await installMockApi(page, { schoolLocations: true });
+  await page.goto('/dashboard?mapTestMode=1');
+  await search(page);
+  await page.getByRole('button', { name: 'Schools', exact: true }).click();
+  const marker = page.getByRole('button', { name: 'Nearby school marker: Synthetic School With Location' });
+  const row = page.getByRole('button', { name: 'Select nearby school Synthetic School With Location' });
+  await expect(marker).toBeVisible();
+  await expect(page.getByText('School locations: NCES EDGE (2024–25 public school data).')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Select nearby school Synthetic Unmatched School' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Nearby school marker: Synthetic Unmatched School' })).toHaveCount(0);
+  await row.click();
+  await expect(marker).toHaveAttribute('aria-pressed', 'true');
+  await marker.click();
+  await expect(row).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Grocery', exact: true }).click();
+  await expect(marker).toHaveCount(0);
+  await expect(page.getByRole('img', { name: `Subject property marker: ${DEMO_ADDRESS}` })).toBeVisible();
+  expect(mock.stats.unhandledApiRequests).toEqual([]);
+});
+
 test('complete synthetic core workflow: contexts, deterministic Offer and Listing, exact History reopen, and CRUD', async ({ page }) => {
   const mock = await installMockApi(page);
   await test.step('1–3: Dashboard search and persisted subject summary', async () => {

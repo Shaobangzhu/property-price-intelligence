@@ -6,6 +6,7 @@ import type { PropertyService } from '../server/src/properties/service.js';
 import type { PropertyRepository, StoredRecord } from '../server/src/properties/repository.js';
 import { NearbySchoolsService, createSchoolProvider } from '../server/src/context/schools.js';
 import { ZillapiClient } from '../server/src/context/zillapi.js';
+import { NcesSchoolLocations, type SchoolLocationSource } from '../server/src/context/school-locations.js';
 import { ArcGisPlacesProvider, GroceryContextService, PlacesError, normalizeGroceryPlaces, parseGroceryPolicy, resolveGroceryCategoryIds } from '../server/src/context/grocery.js';
 import { getContextMarkers } from '../client/src/features/map/contextMarkers.js';
 
@@ -17,9 +18,9 @@ function repository(record: StoredRecord | null = subject) {
 }
 const property = { zpid: '123456', address: { streetAddress: '123 Example St #4', city: 'Sample City', state: 'CA', zipcode: '90000' } };
 const nearby = { name: 'Synthetic Nearby School', level: 'Elementary', rating: 7, distance: 0.4, type: 'public' };
-function schoolApp(provider: ZillapiClient | null, repo = repository(), log = vi.fn()) {
+function schoolApp(provider: ZillapiClient | null, repo = repository(), log = vi.fn(), locations?: SchoolLocationSource) {
   return createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
-    schoolsService: new NearbySchoolsService(repo, provider), log });
+    schoolsService: new NearbySchoolsService(repo, provider, locations), log });
 }
 
 describe('nearby school context', () => {
@@ -62,6 +63,38 @@ describe('nearby school context', () => {
     expect((await request(app).get(`/api/properties/${id}/nearby-schools`)).status).toBe(404);
     expect((await request(app).get('/api/properties/invalid/nearby-schools')).status).toBe(400);
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('enriches the provider list with official school locations through HTTP and produces only matched markers', async () => {
+    const transport = vi.fn<typeof fetch>(async () => Response.json({ data: { ...property, schools: [nearby, { ...nearby, name: 'Unmatched School' }] } }));
+    const locationTransport = vi.fn<typeof fetch>(async () => Response.json({ spatialReference: { wkid: 4326 }, features: [{
+      attributes: { NCESSCH: 'synthetic-nces', NAME: nearby.name, CITY: 'Synthetic City', STATE: 'CA', SCHOOLYEAR: '2024-2025' },
+      geometry: { x: -97.1, y: 30.105 }
+    }] }));
+    const locatedSubject = { ...subject, property: { ...subject.property, city: 'Synthetic City', state: 'CA' } };
+    const app = schoolApp(new ZillapiClient('synthetic-key', transport), repository(locatedSubject), vi.fn(), new NcesSchoolLocations(locationTransport));
+    const response = await request(app).get(`/api/properties/${id}/nearby-schools`);
+    expect(response.status).toBe(200);
+    const result = NearbySchoolsResponse.parse(response.body);
+    expect(result.schools).toHaveLength(2);
+    expect(result.schools[0]).toMatchObject({ latitude: 30.105, longitude: -97.1, locationSource: 'NCES_EDGE_2024_25' });
+    expect(result.schools[1]?.latitude).toBeNull();
+    expect(getContextMarkers('schools', result, null)).toMatchObject([{ label: nearby.name, latitude: 30.105, longitude: -97.1 }]);
+    await request(app).get(`/api/properties/${id}/nearby-schools`);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(locationTransport).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps nearby schools available when optional school locations fail', async () => {
+    const transport = vi.fn<typeof fetch>(async () => Response.json({ data: { ...property, schools: [nearby] } }));
+    const locations = { locate: vi.fn(async () => { throw new Error('synthetic-secret'); }) };
+    const response = await request(schoolApp(new ZillapiClient('synthetic-key', transport), repository(), vi.fn(), locations))
+      .get(`/api/properties/${id}/nearby-schools`);
+    expect(response.status).toBe(200);
+    const result = NearbySchoolsResponse.parse(response.body);
+    expect(result.status).toBe('AVAILABLE');
+    expect(result.schools[0]?.latitude).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('synthetic-secret');
   });
 
   it('distinguishes an explicit empty list from missing school data', async () => {

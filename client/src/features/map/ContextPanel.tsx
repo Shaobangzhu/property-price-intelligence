@@ -41,6 +41,7 @@ function SchoolResults({ data, selectedId, onSelect }: { data: NearbySchoolsResp
   return <div className="context-results">
     <p className="context-source">Source: Zillapi (third-party property data)</p>
     <p className="context-source">Nearby schools only. Attendance eligibility is not verified. Confirm with the local school district.</p>
+    {data.schools.some(school => school.locationSource === 'NCES_EDGE_2024_25') && <p className="context-source">School locations: NCES EDGE (2024–25 public school data).</p>}
     {located < data.schools.length && <p className="context-source">{located === 0 ? 'School coordinates are unavailable; no school markers are shown.' : 'Only schools with coordinates have map markers.'}</p>}
     {levels.map(level => { const schools = data.schools.filter(school => school.level === level); return schools.length ? <div className="context-group" key={level}><h3>{level.charAt(0) + level.slice(1).toLowerCase()}</h3><ul className="context-list">{schools.map(school => <li key={school.id}><button type="button" className="context-result" aria-label={`Select nearby school ${school.name}`} aria-pressed={selectedId === school.id} onClick={() => onSelect(school.id)}><strong>{school.name}</strong><span>{school.levelLabel ?? 'Level unavailable'} · {school.schoolType ?? 'Type unavailable'}</span><small>{school.distanceMiles === null ? 'Distance unavailable' : `${school.distanceMiles.toFixed(2)} mi`} · {school.rating === null ? 'Rating unavailable' : `Rating ${school.rating}/10`}</small></button></li>)}</ul></div> : null; })}
   </div>;

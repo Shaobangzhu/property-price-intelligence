@@ -15,9 +15,9 @@ describe('Zillapi isolated diagnostic', () => {
     const result = await new ZillapiClient(key, transport).lookupSchools(address);
     expect(result.schools).toEqual([
       { id: expect.stringMatching(/^school:/), name: nearby.name, level: 'ELEMENTARY', levelLabel: 'Elementary', schoolType: 'public',
-        rating: 7, distanceMiles: 0.4, latitude: null, longitude: null },
+        rating: 7, distanceMiles: 0.4, latitude: null, longitude: null, locationSource: null },
       { id: expect.stringMatching(/^school:/), name: 'Unknown level school', level: 'OTHER', levelLabel: 'Combined', schoolType: null,
-        rating: null, distanceMiles: null, latitude: null, longitude: null }
+        rating: null, distanceMiles: null, latitude: null, longitude: null, locationSource: null }
     ]);
     expect(JSON.stringify(result.schools)).not.toMatch(/assignment|synthetic-server-secret|owner|district|grades/);
   });

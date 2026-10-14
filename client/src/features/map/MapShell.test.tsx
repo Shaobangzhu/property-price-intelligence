@@ -5,7 +5,7 @@ import type { MarketComparableCandidate, PropertyRecord } from '@ppi/shared';
 import { MapShell } from './MapShell.js';
 
 type Layer = { title: string; visible: boolean; graphics: unknown[]; destroy: () => void };
-type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn> };
+type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn> };
 const sdk = vi.hoisted(() => ({ views: [] as View[], layers: [] as Layer[], basemapFailure: false }));
 vi.mock('@arcgis/core/config.js', () => ({ default: { log: { level: 'none' }, apiKey: '' } }));
 vi.mock('@arcgis/core/Graphic.js', () => ({ default: class { constructor(value: object) { Object.assign(this, value); } } }));
@@ -31,6 +31,7 @@ vi.mock('@arcgis/core/views/MapView.js', () => ({ default: class {
   ready = true; extent = {}; resolution = 1; destroy = vi.fn(); handles: ReturnType<typeof vi.fn>[] = [];
   events: Record<string, (event: unknown) => void> = {};
   hitTest = vi.fn(async () => ({ results: [] }));
+  goTo = vi.fn<(target: unknown, options?: unknown) => Promise<void>>(async () => {});
   constructor() { sdk.views.push(this); }
   when() { return Promise.resolve(); }
   on(name: string, callback: (event: unknown) => void) { this.events[name] = callback; const remove = vi.fn(); this.handles.push(remove); return { remove }; }
@@ -142,6 +143,25 @@ it('ignores a late hit test for context graphics that have been removed', async 
   await act(async () => { finish?.({ results: [{ graphic: { attributes: { id: 'synthetic-place', context: true } } }] }); });
   expect(select).not.toHaveBeenCalled();
   expect(sdk.layers.find(layer => layer.title === 'Selected Context')?.graphics).toHaveLength(0);
+});
+
+it('draws purple school circles, fits them with the subject once, and synchronizes selection without resetting the view', async () => {
+  const markers = [{ id: 'school:synthetic', kind: 'school' as const, label: 'Synthetic school', detail: 'NCES location', latitude: 37.04, longitude: -122.04 }];
+  const select = vi.fn();
+  const view = render(<MapShell {...props} activeContext="schools" contextMarkers={markers} onSelectContext={select} />);
+  await waitFor(() => expect(sdk.views[0]?.goTo).toHaveBeenCalledOnce());
+  const layer = sdk.layers.find(layer => layer.title === 'Selected Context')!;
+  expect(layer.graphics).toMatchObject([{ geometry: { latitude: 37.04, longitude: -122.04 }, symbol: { style: 'circle', color: '#7552a3', size: 14 } }]);
+  expect(sdk.views[0]!.goTo.mock.calls[0]![0]).toHaveLength(2);
+  sdk.views[0]!.hitTest.mockResolvedValue({ results: [{ graphic: { attributes: { id: 'school:synthetic', context: true } } }] });
+  await act(async () => { sdk.views[0]!.events.click?.({}); });
+  expect(select).toHaveBeenCalledWith('school:synthetic');
+  view.rerender(<MapShell {...props} activeContext="schools" contextMarkers={markers} selectedContextId="school:synthetic" onSelectContext={select} />);
+  expect(layer.graphics).toMatchObject([{ symbol: { style: 'circle', color: '#7552a3', size: 20 } }]);
+  expect(sdk.views[0]!.goTo).toHaveBeenCalledOnce();
+  view.rerender(<MapShell {...props} activeContext="grocery" />);
+  expect(layer.graphics).toEqual([]);
+  expect(sdk.views).toHaveLength(1);
 });
 
 it('shows a safe map fallback when basemap loading fails and cleans up its view', async () => {

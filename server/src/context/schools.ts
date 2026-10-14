@@ -4,6 +4,7 @@ import { PropertyError } from '../properties/service.js';
 import { addressMatches } from '../properties/address.js';
 import type { ServerConfig } from '../config/env.js';
 import { ZillapiClient, ZillapiError } from './zillapi.js';
+import type { SchoolLocationSource } from './school-locations.js';
 
 // Keep the existing env spelling compatible with user-owned server/.env files.
 export function createSchoolProvider(config: Pick<ServerConfig, 'SCHOOL_ASSIGNMENT_PROVIDER' | 'ZILLAPI_API_KEY'>): ZillapiClient | null {
@@ -13,7 +14,8 @@ export function createSchoolProvider(config: Pick<ServerConfig, 'SCHOOL_ASSIGNME
 }
 
 export class NearbySchoolsService {
-  constructor(private readonly properties: PropertyRepository, private readonly provider: Pick<ZillapiClient, 'lookupSchools'> | null) {}
+  constructor(private readonly properties: PropertyRepository, private readonly provider: Pick<ZillapiClient, 'lookupSchools'> | null,
+    private readonly locations?: SchoolLocationSource) {}
 
   async get(propertyId: string): Promise<NearbySchoolsResponse> {
     const record = await this.properties.findById(propertyId);
@@ -24,7 +26,11 @@ export class NearbySchoolsService {
         formattedAddress: record.property.formattedAddress, unit: record.property.unit
       })) throw new ZillapiError('SUBJECT_MISMATCH');
       const result = await this.provider.lookupSchools(record.property.formattedAddress);
-      const schools = result.schools ?? [];
+      let schools = result.schools ?? [];
+      if (schools.length && this.locations) {
+        try { schools = await this.locations.locate(record.property, schools); }
+        catch { /* Keep provider schools visible when optional location enrichment fails. */ }
+      }
       return { propertyId, status: result.schools === null ? 'DATA_UNAVAILABLE' : schools.length ? 'AVAILABLE' : 'NO_RESULTS',
         schools, source: 'ZILLAPI' };
     } catch (error) {
