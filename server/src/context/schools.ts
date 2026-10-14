@@ -4,6 +4,7 @@ import { AssignedSchool, AssignmentLevel, type AssignedSchoolsResponse } from '@
 import type { PropertyRepository, StoredProperty } from '../properties/repository.js';
 import { PropertyError } from '../properties/service.js';
 import { distanceMiles } from '../market/provider.js';
+import type { ServerConfig } from '../config/env.js';
 
 const text = z.string().trim().min(1).max(250);
 const VerifiedAssignment = z.object({
@@ -27,6 +28,17 @@ class AssignmentSourceUnavailable extends Error {}
 // No verified assignment adapter is connected. This is not an empty provider result.
 export class UnavailableAssignmentSource implements VerifiedAssignmentSource {
   async get(): Promise<never> { throw new AssignmentSourceUnavailable(); }
+}
+
+export function createAssignmentSource(config: Pick<ServerConfig, 'SCHOOL_ASSIGNMENT_PROVIDER' | 'ZILLAPI_API_KEY'>): VerifiedAssignmentSource {
+  switch (config.SCHOOL_ASSIGNMENT_PROVIDER) {
+    case 'unavailable': return new UnavailableAssignmentSource();
+    case 'zillapi':
+      if (!config.ZILLAPI_API_KEY) throw new Error('Invalid configuration: ZILLAPI_API_KEY');
+      // Zillapi documents nearby schools, not attendance assignments. The isolated
+      // diagnostic client must never become a VerifiedAssignmentSource by inference.
+      return new UnavailableAssignmentSource();
+  }
 }
 
 const normalize = (value: string | null) => value?.toLowerCase().normalize('NFKD').replace(/\p{Diacritic}/gu, '').replace(/[^a-z0-9]/g, '') ?? '';

@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig, parseServerConfig, assertLocalDatabase } from '../server/src/config/env.js';
 
 describe('configuration', () => {
+  it.each([parseConfig, parseServerConfig])('validates backend school provider configuration safely', parse => {
+    expect(parse({}).SCHOOL_ASSIGNMENT_PROVIDER).toBe('unavailable');
+    expect(parse({ SCHOOL_ASSIGNMENT_PROVIDER: 'zillapi', ZILLAPI_API_KEY: 'synthetic-backend-key' })).toMatchObject({
+      SCHOOL_ASSIGNMENT_PROVIDER: 'zillapi', ZILLAPI_API_KEY: 'synthetic-backend-key'
+    });
+    expect(() => parse({ SCHOOL_ASSIGNMENT_PROVIDER: 'nearby-is-assigned' })).toThrow('SCHOOL_ASSIGNMENT_PROVIDER');
+    for (const key of [undefined, '', '   ']) expect(() => parse({ SCHOOL_ASSIGNMENT_PROVIDER: 'zillapi', ZILLAPI_API_KEY: key })).toThrow('ZILLAPI_API_KEY');
+    expect(() => parse({ SCHOOL_ASSIGNMENT_PROVIDER: 'zillapi', VITE_ZILLAPI_API_KEY: 'synthetic-browser-key' })).toThrow('ZILLAPI_API_KEY');
+    expect(parse({ ZILLAPI_API_KEY: 'synthetic-backend-key' })).not.toHaveProperty('VITE_ZILLAPI_API_KEY');
+    try { parse({ SCHOOL_ASSIGNMENT_PROVIDER: 'synthetic-secret-provider', ZILLAPI_API_KEY: 'synthetic-secret-key' }); }
+    catch (error) { expect(String(error)).not.toContain('synthetic-secret'); }
+  });
   it('accepts both loopback spellings only on configured ports without changing the configured value', () => {
     const values = { ALLOWED_ORIGINS: 'http://localhost:5173' };
     expect(parseServerConfig(values).origins).toEqual(['http://localhost:5173', 'http://127.0.0.1:5173']);

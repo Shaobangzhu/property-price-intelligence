@@ -4,7 +4,7 @@ import { AssignedSchoolsResponse } from '@ppi/shared';
 import { createApp } from '../server/src/app.js';
 import type { PropertyService } from '../server/src/properties/service.js';
 import type { PropertyRepository, StoredRecord } from '../server/src/properties/repository.js';
-import { AssignedSchoolsService, UnavailableAssignmentSource, matchSchool, type SchoolReference, type VerifiedAssignment } from '../server/src/context/schools.js';
+import { AssignedSchoolsService, UnavailableAssignmentSource, createAssignmentSource, matchSchool, type SchoolReference, type VerifiedAssignment } from '../server/src/context/schools.js';
 import { ArcGisPlacesProvider, GroceryContextService, PlacesError, normalizeGroceryPlaces, parseGroceryPolicy, resolveGroceryCategoryIds } from '../server/src/context/grocery.js';
 import { getContextMarkers } from '../client/src/features/map/contextMarkers.js';
 
@@ -17,6 +17,18 @@ function repository(record: StoredRecord | null = subject) {
 }
 
 describe('assigned school boundary', () => {
+  it.each(['unavailable', 'zillapi'] as const)('keeps %s disconnected through the existing endpoint without paid fetches', async provider => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
+      schoolsService: new AssignedSchoolsService(repository(), createAssignmentSource({ SCHOOL_ASSIGNMENT_PROVIDER: provider, ZILLAPI_API_KEY: 'synthetic-key' })) });
+    const response = await request(app).get(`/api/properties/${id}/assigned-schools`);
+    expect(response.status).toBe(200);
+    const result = AssignedSchoolsResponse.parse(response.body);
+    expect(result).toEqual({ propertyId: id, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null });
+    expect(getContextMarkers('schools', result, null)).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('shows unavailable when there is no verified assignment source, even with a nearby reference', async () => {
     const refs = { lookup: vi.fn(async () => [reference]) };
     const service = new AssignedSchoolsService(repository(), new UnavailableAssignmentSource(), refs);
@@ -27,6 +39,19 @@ describe('assigned school boundary', () => {
   it.each([null, { source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [] }])('reserves assignment unavailable for a successful empty result', async result => {
     const service = new AssignedSchoolsService(repository(), { get: async () => result });
     expect((await service.get(id)).status).toBe('ASSIGNMENT_UNAVAILABLE');
+  });
+
+  it('preserves multiple verified identities and all levels in the internal source contract, without inventing coordinates', async () => {
+    const schools = (['ELEMENTARY', 'ELEMENTARY', 'MIDDLE', 'HIGH'] as const).map((assignmentLevel, index) => ({
+      ...assignment, assignmentLevel, sourceSchoolId: `synthetic-${index}`, name: `Synthetic school ${index}`,
+      district: null, city: null
+    }));
+    const result = await new AssignedSchoolsService(repository(), { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools }) }).get(id);
+    expect(AssignedSchoolsResponse.parse(result).status).toBe('UNMATCHED');
+    expect(result.schools.map(school => school.assignmentLevel)).toEqual(['ELEMENTARY', 'ELEMENTARY', 'MIDDLE', 'HIGH']);
+    expect(new Set(result.schools.map(school => school.id)).size).toBe(4);
+    expect(result.schools.every(school => school.latitude === null && school.longitude === null && school.district === null)).toBe(true);
+    expect(getContextMarkers('schools', result, null)).toEqual([]);
   });
 
   it.each([undefined, {}, [], { source: '', schools: [assignment] }, { source: 'SYNTHETIC', schools: {} },

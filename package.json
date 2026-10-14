@@ -26,6 +26,7 @@
     "db:migrate": "node --import tsx scripts/db-migrate.mjs",
     "prisma:validate": "node --env-file=server/.env node_modules/prisma/build/index.js validate",
     "smoke:providers": "npm run build -w shared && node --import tsx scripts/smoke/cli.ts",
+    "smoke:zillapi": "node --import tsx scripts/smoke/zillapi-cli.ts",
     "eval:analysis": "npm run build -w shared && node --import tsx scripts/eval/inspect.ts --live"
   },
   "devDependencies": {

@@ -33,6 +33,18 @@ The **deterministic pricing engine + AI explanation** boundary is explicit. Plai
 
 No verified production school-assignment provider is connected. Schools correctly reports assignment unavailable; nearby schools and unlicensed ratings are never substituted.
 
+## Post-freeze Zillapi school investigation
+
+**BLOCKED BY PROVIDER DATA LIMITATIONS** (2026-10-14). Zillapi is third-party property data. Its [school API](https://zillapi.com/api/properties/) does not document attendance assignment, and its [neighborhood guide](https://zillapi.com/blog/zillow-neighborhood-data-api/) describes nearby schools. School names, levels and distances cannot establish assigned Elementary, Middle or High schools. No attendance boundaries or Zillapi school markers are enabled. This extension does not change the historical Core Prototype v0.1 audit.
+
+Backend config accepts `SCHOOL_ASSIGNMENT_PROVIDER=unavailable` (default) or `zillapi`. Selecting `zillapi` requires `ZILLAPI_API_KEY`; missing/blank keys fail configuration safely. Both selections currently retain `UnavailableAssignmentSource` behind `AssignedSchoolsService`, returning `SOURCE_UNAVAILABLE`. The isolated Zillapi diagnostic is not an assignment adapter. Keep the key only in ignored `server/.env` or the server process environment; never add a Vite credential. Preserve existing local env files.
+
+To test locally, start PPI normally, resolve or open a saved property in Dashboard, and select Schools. Expect “School assignments not connected,” no school markers, and zero Zillapi requests. Property search, History, Offer and Listing also make zero Zillapi requests.
+
+`npm run smoke:zillapi` is a zero-request dry run. A developer may explicitly enable `ALLOW_LIVE_API_TESTS=true`, supply an existing `SMOKE_TEST_ADDRESS` and backend key, and manually invoke `npm run smoke:zillapi -- --live`. Do not put residential addresses in command arguments or tracked files. The CLI uses at most two sequential requests for one address: projected `GET /v1/properties/by-address?address=…&fields=zpid,address,schools`, then `GET /v1/properties/{zpid}/schools` only if schools were absent/null and an ID exists. An empty schools array needs no second request. Successful calls currently cost three credits plus one if the second request is needed; actual billing is reported only from `X-Credits-Charged`. There are no retries or paid fallbacks. It reports only safe status/credit/presence metadata and never claims assignment verification. A network failure is a failed attempt, not an empty assignment result.
+
+Live Zillapi validation for this extension was **NOT RUN**; zero paid requests and zero credits consumed. See [provider findings](docs/provider-capabilities.md#post-freeze-zillapi-investigation--2026-10-14) for evidence, limits and licensing assumptions.
+
 ## Prerequisites
 
 - Node 24.19.0 (`.nvmrc`) and npm 11.

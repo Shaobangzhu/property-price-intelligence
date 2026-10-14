@@ -8,7 +8,7 @@ const root = resolve(import.meta.dirname, '..');
 const git = process.platform === 'darwin' ? '/usr/bin/git' : 'git';
 const localFiles = ['.env', 'server/.env', 'client/.env.local'];
 const values = Object.fromEntries(localFiles.map(file => [file, existsSync(resolve(root, file)) ? parseEnv(readFileSync(resolve(root, file), 'utf8')) : {}]));
-const names = ['RENTCAST_API_KEY', 'OPENAI_API_KEY', 'ARCGIS_PLACES_API_KEY', 'POSTGRES_PASSWORD', 'DATABASE_URL'];
+const names = ['RENTCAST_API_KEY', 'ZILLAPI_API_KEY', 'OPENAI_API_KEY', 'ARCGIS_PLACES_API_KEY', 'POSTGRES_PASSWORD', 'DATABASE_URL'];
 const placeholder = value => !value || /[<>]|^(?:replace|your[-_ ]|example|changeme)/i.test(value);
 const secrets = new Set();
 for (const env of Object.values(values)) for (const name of names) {
