@@ -6,8 +6,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { calculatePricing, type AnalysisRun, type PricingInput, type PropertyEnvelope } from '@ppi/shared';
 import { App } from './App.js';
 import { PricingAnalysisDialog } from './features/pricing/PricingAnalysisDialog.js';
-import { AssignedSchoolsService } from '../../server/src/context/schools.js';
-import type { PropertyRepository } from '../../server/src/properties/repository.js';
 
 const firstId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const secondId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -66,7 +64,7 @@ beforeEach(() => {
     if (url.includes('/market-context')) return Response.json(marketResponse());
     if (url.includes('/analyses') && init?.method === 'POST') { const body = JSON.parse(String(init?.body)); return Response.json(analysisResponse(body.mode, body.strategyProfile, body.maxBudget ?? null)); }
     if (url.includes('/pricing/preview')) { const body = JSON.parse(String(init?.body)); return Response.json(pricingResponse(body.mode, body.strategyProfile, body.maxBudget ?? null)); }
-    if (url.includes('/assigned-schools')) return Response.json({ propertyId: firstId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null });
+    if (url.includes('/nearby-schools')) return Response.json({ propertyId: firstId, status: 'NO_RESULTS', schools: [], source: null });
     if (url.includes('/nearby-places')) return Response.json({ propertyId: firstId, status: 'AVAILABLE', places: [{ id: 'grocery-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }], source: 'ARCGIS_PLACES', radiusMeters: 1600 });
     if (url.includes('/wildfire-context')) return Response.json({ propertyId: firstId, status: 'INSIDE_DISPLAYED_ZONE', classification: 'High', responsibilityArea: 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'effective 2024-04-01', checkedAt: '2026-09-29T12:00:00.000Z' });
     if (url.includes('/fault-context')) return Response.json({ propertyId: firstId, contextType: 'FAULT_TRACE', status: 'NEAREST_MAPPED_FAULT', nearestFeatureName: 'Serra fault', distanceMiles: 7.13, searchRadiusMiles: 20, sourceName: 'California Geological Survey 2010 Fault Activity Map — Quaternary Faults', sourceVersion: '2010 map', checkedAt: '2026-09-29T12:00:00.000Z' });
@@ -133,7 +131,7 @@ describe('Dashboard', () => {
         const market = marketResponse(secondId); market.recordedSales.candidates[0]!.id = 'sale-b'; market.recordedSales.candidates[0]!.address = 'Synthetic B Sale';
         return Response.json(market);
       }
-      if (url.includes(`${secondId}/assigned-schools`)) return Response.json({ propertyId: secondId, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null });
+      if (url.includes(`${secondId}/nearby-schools`)) return Response.json({ propertyId: secondId, status: 'SOURCE_UNAVAILABLE', schools: [], source: null });
       return baseFetch(input, init);
     });
     renderAt();
@@ -142,11 +140,11 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Recorded Sales' }));
     fireEvent.click(screen.getByRole('button', { name: 'Schools' }));
-    await screen.findByText('Assignment unavailable');
+    await screen.findByText('No nearby schools returned');
     fireEvent.change(input, { target: { value: '222 Oak Ave, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByRole('button', { name: 'Recorded sale marker: Synthetic B Sale' });
-    await screen.findByText('School assignments not connected');
+    await screen.findByText('Nearby schools not connected');
     expect(screen.getByRole('button', { name: 'Recorded Sales' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Active Listings' }).getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByRole('button', { name: 'Schools' }).getAttribute('aria-pressed')).toBe('true');
@@ -263,9 +261,9 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Recorded Sales' }));
     fireEvent.click(schools);
     expect(schools.getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByRole('heading', { name: 'Assigned Schools' })).toBeTruthy();
-    await screen.findByText('The school-assignment source returned no assignment information for this property.');
-    expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Nearby Schools' })).toBeTruthy();
+    await screen.findByText('Zillapi returned an empty nearby-school list for this property. This does not establish school coverage or attendance eligibility.');
+    expect(screen.queryByRole('button', { name: /Nearby school marker/ })).toBeNull();
     fireEvent.click(grocery);
     expect(schools.getAttribute('aria-pressed')).toBe('false');
     expect(grocery.getAttribute('aria-pressed')).toBe('true');
@@ -279,12 +277,37 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: /Recorded sale marker: 125 Main/ })).toBeTruthy();
   });
 
-  it('synchronizes verified assigned-school list and marker selection without using nearby schools', async () => {
-    // Synthetic internal adapter fixture; RentCast does not document this schema.
-    const schools = await new AssignedSchoolsService({ findById: async () => ({ property: makeRecord().property, snapshot: null }) } as unknown as PropertyRepository,
-      { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [{ assignmentLevel: 'ELEMENTARY', sourceSchoolId: 'one', name: 'Oak Elementary', district: 'Austin ISD', city: 'Austin', latitude: 30.11, longitude: -97.11, grades: 'K–5', schoolType: 'Public' }] }) }).get(firstId);
+  it('shows nearby metadata and attendance limits without inventing school markers', async () => {
+    const schools = { propertyId: firstId, status: 'AVAILABLE', source: 'ZILLAPI', schools: [
+      { id: 'school:one', name: 'Oak Elementary', level: 'ELEMENTARY', levelLabel: 'Elementary', schoolType: 'public', rating: 7,
+        distanceMiles: 0.4, latitude: null, longitude: null },
+      { id: 'school:two', name: 'Pine Middle', level: 'MIDDLE', levelLabel: 'Middle', schoolType: null, rating: null,
+        distanceMiles: null, latitude: null, longitude: null }
+    ] };
     const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
-    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => String(input).includes('/assigned-schools')
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => String(input).includes('/nearby-schools')
+      ? Promise.resolve(Response.json(schools)) : baseFetch(input, init));
+    renderAt();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Schools' }));
+    await screen.findByRole('button', { name: 'Select nearby school Oak Elementary' });
+    expect(screen.getByText('Source: Zillapi (third-party property data)')).toBeTruthy();
+    expect(screen.getByText('Nearby schools only. Attendance eligibility is not verified. Confirm with the local school district.')).toBeTruthy();
+    expect(screen.getByText('0.40 mi · Rating 7/10')).toBeTruthy();
+    expect(screen.getByText('Distance unavailable · Rating unavailable')).toBeTruthy();
+    expect(screen.getByText('School coordinates are unavailable; no school markers are shown.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Nearby school marker/ })).toBeNull();
+    expect(screen.queryByText(/Assigned Schools|verified assignments/)).toBeNull();
+  });
+
+  it('synchronizes nearby-school list and coordinate-backed marker selection', async () => {
+    // Synthetic coordinate-backed fixture; Zillapi's documented school example has no coordinates.
+    const schools = { propertyId: firstId, status: 'AVAILABLE', source: 'ZILLAPI', schools: [{ id: 'school:one',
+      name: 'Oak Elementary', level: 'ELEMENTARY', levelLabel: 'Elementary', schoolType: 'public', rating: 7,
+      distanceMiles: 0.4, latitude: 30.11, longitude: -97.11 }] };
+    const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
+    fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => String(input).includes('/nearby-schools')
       ? Promise.resolve(Response.json(schools))
       : baseFetch(input, init));
     renderAt();
@@ -292,47 +315,48 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Schools' }));
     fireEvent.click(screen.getByRole('button', { name: 'Recorded Sales' }));
-    const schoolRow = await screen.findByRole('button', { name: 'Select assigned school Oak Elementary' });
+    const schoolRow = await screen.findByRole('button', { name: 'Select nearby school Oak Elementary' });
     fireEvent.click(schoolRow);
-    expect(screen.getByRole('button', { name: 'Assigned school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Nearby school marker: Oak Elementary' }).getAttribute('aria-pressed')).toBe('true');
     expect(schoolRow.getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('button', { name: /Grocery marker/ })).toBeNull();
     expect(await screen.findByRole('button', { name: /Recorded sale marker/ })).toBeTruthy();
   });
 
   it.each([
-    ['source missing', () => Response.json({ propertyId: firstId, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null }), 'School assignments not connected'],
-    ['legacy provider failure', () => Response.json({ propertyId: firstId, status: 'PROVIDER_ERROR', schools: [], assignmentSource: null }), 'School request failed'],
-    ['upstream failure', () => Response.json({ error: { code: 'SCHOOL_ASSIGNMENT_PROVIDER_ERROR', message: 'failed', requestId: 'synthetic' } }, { status: 502 }), 'School request failed'],
-    ['upstream malformed', () => Response.json({ error: { code: 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED', message: 'invalid', requestId: 'synthetic' } }, { status: 502 }), 'School response invalid'],
+    ['source missing', () => Response.json({ propertyId: firstId, status: 'SOURCE_UNAVAILABLE', schools: [], source: null }), 'Nearby schools not connected'],
+    ['legacy provider failure', () => Response.json({ propertyId: firstId, status: 'PROVIDER_ERROR', schools: [], source: null }), 'School request failed'],
+    ['upstream failure', () => Response.json({ error: { code: 'SCHOOL_PROVIDER_ERROR', message: 'failed', requestId: 'synthetic' } }, { status: 502 }), 'School request failed'],
+    ['upstream malformed', () => Response.json({ error: { code: 'SCHOOL_PROVIDER_MALFORMED', message: 'invalid', requestId: 'synthetic' } }, { status: 502 }), 'School response invalid'],
     ['API schema mismatch', () => Response.json({ propertyId: firstId, status: 'AVAILABLE', schools: {} }), 'School response invalid'],
-    ['inconsistent empty success', () => Response.json({ propertyId: firstId, status: 'AVAILABLE', schools: [], assignmentSource: 'SYNTHETIC' }), 'School response invalid'],
+    ['inconsistent empty success', () => Response.json({ propertyId: firstId, status: 'AVAILABLE', schools: [], source: 'ZILLAPI' }), 'School response invalid'],
     ['invalid JSON', () => new Response('{'), 'School response invalid'],
-    ['wrong property', () => Response.json({ propertyId: secondId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null }), 'School response invalid'],
+    ['wrong property', () => Response.json({ propertyId: secondId, status: 'NO_RESULTS', schools: [], source: null }), 'School response invalid'],
     ['network failure', () => { throw new TypeError('offline'); }, 'School request failed']
   ] as const)('distinguishes %s from a successful empty school result', async (_scenario, response, title) => {
     const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
-    fetchMock.mockImplementation(async (input: string | URL, init?: RequestInit) => String(input).includes('/assigned-schools') ? response() : baseFetch(input, init));
+    fetchMock.mockImplementation(async (input: string | URL, init?: RequestInit) => String(input).includes('/nearby-schools') ? response() : baseFetch(input, init));
     renderAt();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search a property address' }), { target: { value: '123 Main St, Apt 2, Austin, TX 78701' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     const schools = await screen.findByRole('button', { name: 'Schools' });
-    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/assigned-schools'))).toBe(false);
+    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/nearby-schools'))).toBe(false);
     fireEvent.click(schools);
     await screen.findByText(title);
-    expect(screen.queryByText('Assignment unavailable')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
+    expect(screen.queryByText('No nearby schools returned')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Nearby school marker/ })).toBeNull();
   });
 
   it('shows school loading and ignores a late school response after switching properties', async () => {
     let resolveSchoolA: ((value: Response) => void) | undefined;
-    const source = { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [{ assignmentLevel: 'HIGH', sourceSchoolId: 'late', name: 'Synthetic Old School', district: null, city: null, latitude: 30.11, longitude: -97.11, grades: null, schoolType: null }] }) };
-    const oldSchools = await new AssignedSchoolsService({ findById: async () => ({ property: makeRecord().property, snapshot: null }) } as unknown as PropertyRepository, source).get(firstId);
+    const oldSchools = { propertyId: firstId, status: 'AVAILABLE', source: 'ZILLAPI', schools: [{ id: 'school:late',
+      name: 'Synthetic Old School', level: 'HIGH', levelLabel: 'High', schoolType: null, rating: null,
+      distanceMiles: null, latitude: null, longitude: null }] };
     const baseFetch = fetchMock.getMockImplementation() as (input: string | URL, init?: RequestInit) => Promise<Response>;
     fetchMock.mockImplementation((input: string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes(`${firstId}/assigned-schools`)) return new Promise<Response>(resolve => { resolveSchoolA = resolve; });
-      if (url.includes(`${secondId}/assigned-schools`)) return Promise.resolve(Response.json({ propertyId: secondId, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: 'SYNTHETIC_VERIFIED_ADAPTER' }));
+      if (url.includes(`${firstId}/nearby-schools`)) return new Promise<Response>(resolve => { resolveSchoolA = resolve; });
+      if (url.includes(`${secondId}/nearby-schools`)) return Promise.resolve(Response.json({ propertyId: secondId, status: 'NO_RESULTS', schools: [], source: 'ZILLAPI' }));
       if (url.endsWith('/resolve') && String(init?.body).includes('222 Oak')) return Promise.resolve(Response.json(makeRecord(secondId, '222 Oak Ave, Austin, TX 78701')));
       if (url.includes(`${secondId}/market-context`)) return Promise.resolve(Response.json(marketResponse(secondId)));
       return baseFetch(input, init);
@@ -348,11 +372,11 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByRole('heading', { name: '222 Oak Ave, Austin, TX 78701' });
     expect(screen.getByRole('button', { name: 'Schools' }).getAttribute('aria-pressed')).toBe('true');
-    await screen.findByText('The school-assignment source returned no assignment information for this property.');
+    await screen.findByText('Zillapi returned an empty nearby-school list for this property. This does not establish school coverage or attendance eligibility.');
     await act(async () => { resolveSchoolA!(Response.json(oldSchools)); });
     expect(screen.queryByText('Synthetic Old School')).toBeNull();
-    expect(screen.queryByRole('button', { name: /Assigned school marker/ })).toBeNull();
-    expect(screen.getByText('Assignment unavailable')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Nearby school marker/ })).toBeNull();
+    expect(screen.getByText('No nearby schools returned')).toBeTruthy();
   });
 
   it('switches official wildfire polygons and fault traces while retaining core candidates', async () => {

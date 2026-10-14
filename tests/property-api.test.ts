@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createApp } from '../server/src/app.js';
 import { PropertyError, type PropertyService } from '../server/src/properties/service.js';
 import type { MarketEvidenceService } from '../server/src/market/service.js';
-import type { AssignedSchoolsService } from '../server/src/context/schools.js';
+import type { NearbySchoolsService } from '../server/src/context/schools.js';
 import type { GroceryContextService } from '../server/src/context/grocery.js';
 import type { HazardContextService } from '../server/src/context/hazards.js';
 import type { PricingPreviewService } from '../server/src/pricing/service.js';
@@ -20,11 +20,11 @@ function setup() {
     delete: vi.fn().mockResolvedValue(undefined)
   };
   const marketService = { get: vi.fn().mockResolvedValue({ propertyId: id, recordedSales: { kind: 'RECORDED_SALES', candidates: [] }, activeListings: { kind: 'ACTIVE_LISTINGS', candidates: [] } }) };
-  const schoolsService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'ASSIGNMENT_UNAVAILABLE', schools: [], assignmentSource: null }) };
+  const schoolsService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_RESULTS', schools: [], source: null }) };
   const groceryService = { get: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_RESULTS', places: [], source: 'ARCGIS_PLACES', radiusMeters: 1600 }) };
   const hazardService = { getWildfire: vi.fn().mockResolvedValue({ propertyId: id, status: 'NO_COVERAGE' }), getFaults: vi.fn().mockResolvedValue({ propertyId: id, contextType: 'FAULT_TRACE', status: 'NO_NEARBY_FEATURES' }) };
   const pricingService = { preview: vi.fn().mockResolvedValue({ status: 'INSUFFICIENT_EVIDENCE', engineVersion: 'ppi-pricing-v1', referencePrice: null }) };
-  const app = createApp({ checkDatabase: async () => true, origins: parseServerConfig({ ALLOWED_ORIGINS: 'http://localhost:5173' }).origins, propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as AssignedSchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService, pricingService: pricingService as unknown as PricingPreviewService });
+  const app = createApp({ checkDatabase: async () => true, origins: parseServerConfig({ ALLOWED_ORIGINS: 'http://localhost:5173' }).origins, propertyService: service as unknown as PropertyService, marketService: marketService as unknown as MarketEvidenceService, schoolsService: schoolsService as unknown as NearbySchoolsService, groceryService: groceryService as unknown as GroceryContextService, hazardService: hazardService as unknown as HazardContextService, pricingService: pricingService as unknown as PricingPreviewService });
   return { app, service, marketService, schoolsService, groceryService, hazardService, pricingService };
 }
 
@@ -96,7 +96,7 @@ describe('property REST routes', () => {
     expect((await request(app).get(`/api/properties/${id}`)).status).toBe(200);
     expect((await request(app).get(`/api/properties/${id}/market-context`)).body.propertyId).toBe(id);
     expect(marketService.get).toHaveBeenCalledWith(id);
-    expect((await request(app).get(`/api/properties/${id}/assigned-schools`)).body.status).toBe('ASSIGNMENT_UNAVAILABLE');
+    expect((await request(app).get(`/api/properties/${id}/nearby-schools`)).body.status).toBe('NO_RESULTS');
     expect(schoolsService.get).toHaveBeenCalledWith(id);
     const places = await request(app).get(`/api/properties/${id}/nearby-places?category=grocery`);
     expect(places.body.status).toBe('NO_RESULTS');

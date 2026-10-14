@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { AnalysisMode, MapContext, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope } from '@ppi/shared';
-import { ApiClientError, apiErrorMessage, getAssignedSchools, getFaultContext, getGroceryPlaces, getMarketContext, getWildfireContext, resolveProperty } from '../../api/properties.js';
+import { ApiClientError, apiErrorMessage, getNearbySchools, getFaultContext, getGroceryPlaces, getMarketContext, getWildfireContext, resolveProperty } from '../../api/properties.js';
 import { FeedbackState } from '../../components/FeedbackState.js';
 import { PropertySummary } from './PropertySummary.js';
 import { MapShell, type MarketLayerVisibility } from '../map/MapShell.js';
@@ -59,7 +59,7 @@ export function DashboardPage() {
     const empty = { schools: null, grocery: null, wildfire: null, faults: null };
     setContextState({ propertyId, context, status: 'loading', ...empty });
     const load = async (): Promise<Pick<ContextState, 'schools' | 'grocery' | 'wildfire' | 'faults'>> => {
-      if (context === 'schools') return { ...empty, schools: await getAssignedSchools(propertyId, controller.signal) };
+      if (context === 'schools') return { ...empty, schools: await getNearbySchools(propertyId, controller.signal) };
       if (context === 'grocery') return { ...empty, grocery: await getGroceryPlaces(propertyId, controller.signal) };
       if (context === 'wildfire') return { ...empty, wildfire: await getWildfireContext(propertyId, controller.signal) };
       return { ...empty, faults: await getFaultContext(propertyId, controller.signal) };

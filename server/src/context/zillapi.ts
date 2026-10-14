@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { NearbySchool } from '@ppi/shared';
 import { addressMatches, normalizeAddressIdentity, requestedUnit } from '../properties/address.js';
 
-// Investigation only: none of these fields establish attendance eligibility.
+// Nearby school metadata only: none of these fields establish attendance eligibility.
 const text = z.string().trim().min(1).max(250);
 const school = z.object({
   name: text, rating: z.number().finite().min(0).max(10).nullable().optional(),
@@ -30,6 +31,7 @@ export type ZillapiDiagnostic = {
   hasZpid: boolean; hasSchoolRecords: boolean; assignmentRelatedFields: string[];
   semanticsVerified: false;
 };
+export type ZillapiSchoolLookup = { schools: NearbySchool[] | null; diagnostic: ZillapiDiagnostic };
 export type ZillapiErrorCode = 'CONFIGURATION' | 'INPUT' | 'BUSY' | 'AUTH' | 'CREDITS_EXHAUSTED' |
   'RATE_LIMIT' | 'NOT_FOUND' | 'TIMEOUT' | 'UPSTREAM' | 'MALFORMED' | 'SUBJECT_MISMATCH';
 export class ZillapiError extends Error {
@@ -44,24 +46,29 @@ function credits(response: Response): number | null {
   return value !== null && /^\d{1,9}$/.test(value) ? Number(value) : null;
 }
 
-/** Backend-only, bounded diagnostics. No raw records, IDs, addresses or school names escape. */
+/** Backend-only transport; only allowlisted nearby metadata and safe diagnostics escape. */
 export class ZillapiClient {
-  private active: { key: string; promise: Promise<ZillapiDiagnostic> } | null = null;
-  private cache = new Map<string, { expiresAt: number; result: ZillapiDiagnostic }>();
+  private active: { key: string; promise: Promise<ZillapiSchoolLookup> } | null = null;
+  private cache = new Map<string, { expiresAt: number; result: ZillapiSchoolLookup }>();
   constructor(private readonly apiKey: string, private readonly transport: typeof fetch = fetch,
     private readonly now: () => number = Date.now) {}
 
   async inspectSchools(address: string): Promise<ZillapiDiagnostic> {
+    return (await this.lookupSchools(address)).diagnostic;
+  }
+
+  async lookupSchools(address: string): Promise<ZillapiSchoolLookup> {
     if (!this.apiKey.trim()) throw new ZillapiError('CONFIGURATION');
     if (address.trim().length < 8 || address.length > 250) throw new ZillapiError('INPUT');
     const key = createHash('sha256').update(normalizeAddressIdentity(address)).digest('hex');
     const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > this.now()) return { ...structuredClone(cached.result), cacheHit: true, requestCount: 0, requests: [] };
+    if (cached && cached.expiresAt > this.now()) return { ...structuredClone(cached.result), diagnostic: {
+      ...structuredClone(cached.result.diagnostic), cacheHit: true, requestCount: 0, requests: [] } };
     if (this.active) {
       if (this.active.key !== key) throw new ZillapiError('BUSY');
       return structuredClone(await this.active.promise);
     }
-    const promise = this.inspect(address);
+    const promise = this.lookup(address, key);
     this.active = { key, promise };
     try {
       const result = await promise;
@@ -73,7 +80,7 @@ export class ZillapiClient {
     } finally { this.active = null; }
   }
 
-  private async inspect(address: string): Promise<ZillapiDiagnostic> {
+  private async lookup(address: string, subjectKey: string): Promise<ZillapiSchoolLookup> {
     const requests: ZillapiRequestMetadata[] = [];
     const url = new URL('https://api.zillapi.com/v1/properties/by-address');
     url.searchParams.set('address', address);
@@ -94,9 +101,18 @@ export class ZillapiClient {
       if (!parsedSchools.success) throw new ZillapiError('MALFORMED', requests);
       entries = parsedSchools.data.data;
     }
-    return { cacheHit: false, requestCount: requests.length, requests, hasZpid: !!data.zpid,
+    const diagnostic: ZillapiDiagnostic = { cacheHit: false, requestCount: requests.length, requests, hasZpid: !!data.zpid,
       hasSchoolRecords: !!entries?.length, assignmentRelatedFields: assignmentFields([data, ...(entries ?? [])]),
       semanticsVerified: false };
+    return { diagnostic, schools: entries == null ? null : entries.map((entry, index) => NearbySchool.parse({
+      // Local display identity only; the documented response has no school ID.
+      id: `school:${createHash('sha256').update(`${subjectKey}:${index}:${entry.name}`).digest('hex').slice(0, 20)}`,
+      name: entry.name, level: ({ elementary: 'ELEMENTARY', middle: 'MIDDLE', high: 'HIGH' } as Record<string, string>)[entry.level?.toLowerCase() ?? ''] ?? 'OTHER',
+      levelLabel: entry.level ?? null, schoolType: entry.type ?? null, rating: entry.rating ?? null,
+      distanceMiles: entry.distance ?? null,
+      // No documented school-coordinate fields; don't place schools at the subject point.
+      latitude: null, longitude: null
+    })) };
   }
 
   private async request(url: URL, endpoint: ZillapiRequestMetadata['endpoint'], requests: ZillapiRequestMetadata[]): Promise<unknown> {

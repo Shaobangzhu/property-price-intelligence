@@ -1,4 +1,4 @@
-import { AnalysisListResponse, AnalysisSummaryListResponse, AnalysisRun, ApiErrorResponse, AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
+import { AnalysisListResponse, AnalysisSummaryListResponse, AnalysisRun, ApiErrorResponse, NearbySchoolsResponse, FaultContextResponse, GroceryResponse, MarketContextResponse, PricingPreviewResponse, PropertyEnvelope, PropertyListResponse, WildfireContextResponse, type PricingPreviewRequest, type PropertyPatchInput } from '@ppi/shared';
 
 const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 
@@ -20,15 +20,15 @@ export function resolveProperty(address: string, signal?: AbortSignal) {
 }
 export function getProperty(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}`, PropertyEnvelope, { signal }); }
 export function getMarketContext(id: string, signal?: AbortSignal) { return request(`/properties/${encodeURIComponent(id)}/market-context`, MarketContextResponse, { signal }); }
-export async function getAssignedSchools(id: string, signal?: AbortSignal) {
+export async function getNearbySchools(id: string, signal?: AbortSignal) {
   try {
-    return await request(`/properties/${encodeURIComponent(id)}/assigned-schools`, { parse(value: unknown) {
-      const parsed = AssignedSchoolsResponse.safeParse(value);
-      if (!parsed.success) throw new ApiClientError('SCHOOL_ASSIGNMENT_RESPONSE_INVALID', 502);
+    return await request(`/properties/${encodeURIComponent(id)}/nearby-schools`, { parse(value: unknown) {
+      const parsed = NearbySchoolsResponse.safeParse(value);
+      if (!parsed.success) throw new ApiClientError('SCHOOL_RESPONSE_INVALID', 502);
       return parsed.data;
-    } }, { signal });
+    } }, { signal, cache: 'no-store' });
   } catch (error) {
-    if (error instanceof SyntaxError) throw new ApiClientError('SCHOOL_ASSIGNMENT_RESPONSE_INVALID', 502);
+    if (error instanceof SyntaxError) throw new ApiClientError('SCHOOL_RESPONSE_INVALID', 502);
     throw error;
   }
 }

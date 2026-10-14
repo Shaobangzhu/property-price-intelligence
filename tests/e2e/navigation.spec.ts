@@ -76,7 +76,7 @@ test('complete synthetic core workflow: contexts, deterministic Offer and Listin
   });
   await test.step('7–11: all four exclusive contexts preserve core markers', async () => {
     await page.getByRole('button', { name: 'Schools', exact: true }).click();
-    await expect(page.getByText('The school-assignment source returned no assignment information for this property.')).toBeVisible();
+    await expect(page.getByText('Zillapi returned an empty nearby-school list for this property. This does not establish school coverage or attendance eligibility.')).toBeVisible();
     await page.getByRole('button', { name: 'Grocery', exact: true }).click();
     await page.getByRole('button', { name: 'Grocery marker: Synthetic Demo Grocery' }).click();
     await expect(page.getByRole('button', { name: 'Select grocery Synthetic Demo Grocery' })).toHaveAttribute('aria-pressed', 'true');

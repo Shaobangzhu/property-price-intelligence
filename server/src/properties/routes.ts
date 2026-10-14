@@ -2,7 +2,7 @@ import { Router, type Request } from 'express';
 import { AnalysisListQuery, ListPropertiesQuery, PricingPreviewRequest, PropertyId, PropertyPatchInput, ResolvePropertyInput } from '@ppi/shared';
 import { PropertyError, type PropertyService } from './service.js';
 import type { MarketEvidenceService } from '../market/service.js';
-import type { AssignedSchoolsService } from '../context/schools.js';
+import type { NearbySchoolsService } from '../context/schools.js';
 import type { GroceryContextService } from '../context/grocery.js';
 import type { HazardContextService } from '../context/hazards.js';
 import type { PricingPreviewService } from '../pricing/service.js';
@@ -14,7 +14,7 @@ function idFrom(request: Request): string {
   return parsed.data;
 }
 
-export function propertyRouter(service: PropertyService, market?: MarketEvidenceService, schools?: AssignedSchoolsService, grocery?: GroceryContextService, hazards?: HazardContextService, pricing?: PricingPreviewService, analyses?: AnalysisService) {
+export function propertyRouter(service: PropertyService, market?: MarketEvidenceService, schools?: NearbySchoolsService, grocery?: GroceryContextService, hazards?: HazardContextService, pricing?: PricingPreviewService, analyses?: AnalysisService) {
   const router = Router();
   router.post('/resolve', async (req, res) => {
     const parsed = ResolvePropertyInput.safeParse(req.body);
@@ -28,7 +28,10 @@ export function propertyRouter(service: PropertyService, market?: MarketEvidence
   });
   router.get('/:id', async (req, res) => res.json(await service.get(idFrom(req))));
   if (market) router.get('/:id/market-context', async (req, res) => res.json(await market.get(idFrom(req))));
-  if (schools) router.get('/:id/assigned-schools', async (req, res) => res.json(await schools.get(idFrom(req))));
+  if (schools) router.get('/:id/nearby-schools', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.json(await schools.get(idFrom(req)));
+  });
   if (grocery) router.get('/:id/nearby-places', async (req, res) => {
     if (req.query.category !== 'grocery' || Object.keys(req.query).length !== 1) throw new PropertyError('INVALID_QUERY', 400);
     res.setHeader('Cache-Control', 'no-store, max-age=0');

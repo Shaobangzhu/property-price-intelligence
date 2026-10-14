@@ -9,7 +9,7 @@
 - Property lookup, profile cache, notes, overrides, refresh, and delete.
 - Recorded comparable sales and separately labeled active asking prices.
 - ArcGIS visualization with synchronized subject/comparable selection.
-- Assigned-school context, with unavailable state when assignment is unverified.
+- Nearby-school context from Zillapi, loaded on demand with explicit attendance limitations.
 - Transient grocery context, wildfire designations, and earthquake-fault context.
 - Deterministic Offer and Listing pricing with an explicit insufficient-evidence state.
 - OpenAI-assisted structured explanation, versioned analysis History, and exact historical reopen.
@@ -25,25 +25,28 @@ The **deterministic pricing engine + AI explanation** boundary is explicit. Plai
 | Source | Use |
 | --- | --- |
 | RentCast | Property records, recorded-sale evidence, active sale-listing asks |
+| Zillapi | On-demand nearby-school metadata; no attendance eligibility claim |
 | ArcGIS basemap | Browser map with its restricted frontend key |
 | ArcGIS Places | Server-requested, transient grocery display |
 | CAL FIRE | California responsibility areas and Fire Hazard Severity Zones |
 | California Geological Survey | Mapped Quaternary fault traces |
 | OpenAI | Structured explanation of deterministic results |
 
-No verified production school-assignment provider is connected. Schools correctly reports assignment unavailable; nearby schools and unlicensed ratings are never substituted.
+Schools shows nearby-school metadata, not assigned schools or attendance boundaries. Confirm enrollment eligibility with the school district.
 
-## Post-freeze Zillapi school investigation
+## Post-freeze Nearby Schools extension
 
-**BLOCKED BY PROVIDER DATA LIMITATIONS** (2026-10-14). Zillapi is third-party property data. Its [school API](https://zillapi.com/api/properties/) does not document attendance assignment, and its [neighborhood guide](https://zillapi.com/blog/zillow-neighborhood-data-api/) describes nearby schools. School names, levels and distances cannot establish assigned Elementary, Middle or High schools. No attendance boundaries or Zillapi school markers are enabled. This extension does not change the historical Core Prototype v0.1 audit.
+The school feature now means **Nearby Schools / schools around the subject**, following the revised product scope. Zillapi is a third-party source of nearby-school names, levels, types, ratings and approximate distances; these records do not establish attendance eligibility. See the [official school reference](https://zillapi.com/api/properties/) and [neighborhood guide](https://zillapi.com/blog/zillow-neighborhood-data-api/). Core Prototype v0.1 audit statements remain historical.
 
-Backend config accepts `SCHOOL_ASSIGNMENT_PROVIDER=unavailable` (default) or `zillapi`. Selecting `zillapi` requires `ZILLAPI_API_KEY`; missing/blank keys fail configuration safely. Both selections currently retain `UnavailableAssignmentSource` behind `AssignedSchoolsService`, returning `SOURCE_UNAVAILABLE`. The isolated Zillapi diagnostic is not an assignment adapter. Keep the key only in ignored `server/.env` or the server process environment; never add a Vite credential. Preserve existing local env files.
+For compatibility with existing ignored local env files, the backend selection variable keeps its legacy name: `SCHOOL_ASSIGNMENT_PROVIDER=unavailable` (default) or `zillapi`. Selecting `zillapi` now enables actual on-demand nearby-school requests and requires `ZILLAPI_API_KEY`. Missing/blank keys fail configuration safely. Keep credentials only in ignored `server/.env` or the server process environment; never add a Vite credential or overwrite an existing env file.
 
-To test locally, start PPI normally, resolve or open a saved property in Dashboard, and select Schools. Expect “School assignments not connected,” no school markers, and zero Zillapi requests. Property search, History, Offer and Listing also make zero Zillapi requests.
+After restarting the API, search for a property in Dashboard and select Schools. The panel is labeled **Nearby Schools**, groups returned levels, and shows available ratings/types/distances with Zillapi attribution and an attendance disclaimer. This calls `GET /api/properties/:id/nearby-schools` for a saved subject. The former `/assigned-schools` endpoint was removed so nearby data cannot be mistaken for verified assignments. Source not configured, missing school data, a successful empty list, and provider failure are separate states. School coordinates are not documented by this integration, so real Zillapi entries currently have no map markers; no coordinates or school boundaries are invented.
 
-`npm run smoke:zillapi` is a zero-request dry run. A developer may explicitly enable `ALLOW_LIVE_API_TESTS=true`, supply an existing `SMOKE_TEST_ADDRESS` and backend key, and manually invoke `npm run smoke:zillapi -- --live`. Do not put residential addresses in command arguments or tracked files. The CLI uses at most two sequential requests for one address: projected `GET /v1/properties/by-address?address=…&fields=zpid,address,schools`, then `GET /v1/properties/{zpid}/schools` only if schools were absent/null and an ID exists. An empty schools array needs no second request. Successful calls currently cost three credits plus one if the second request is needed; actual billing is reported only from `X-Credits-Charged`. There are no retries or paid fallbacks. It reports only safe status/credit/presence metadata and never claims assignment verification. A network failure is a failed attempt, not an empty assignment result.
+Selecting Schools may consume paid credits. A cache miss uses projected `GET /v1/properties/by-address?address=…&fields=zpid,address,schools`, with exact normalized address/unit matching. Only absent/null schools with an ID permit `GET /v1/properties/{zpid}/schools`. Explicit empty arrays stop after one request. Successful calls currently cost three credits plus one if the second is needed; see [pricing](https://zillapi.com/pricing/). There are no retries, fallback APIs or startup calls. A 32-entry, ten-minute server memory cache holds only normalized display data and safe diagnostic metadata, never raw responses. Duplicate same-subject requests share the operation; other simultaneous subjects get a sanitized busy response. Property search, History, Offer and Listing do not initiate school lookups. If Schools remains selected when changing subjects, it loads that new subject's nearby schools.
 
-Live Zillapi validation for this extension was **NOT RUN**; zero paid requests and zero credits consumed. See [provider findings](docs/provider-capabilities.md#post-freeze-zillapi-investigation--2026-10-14) for evidence, limits and licensing assumptions.
+`ALLOW_LIVE_API_TESTS` controls diagnostic/test access, not ordinary user-initiated application requests. `npm run smoke:zillapi` is a zero-request dry run; the separate `npm run smoke:zillapi -- --live` additionally requires developer-enabled `ALLOW_LIVE_API_TESTS=true`, a backend key and existing `SMOKE_TEST_ADDRESS`. Do not put residential addresses in tracked files or command arguments. It emits only safe diagnostic metadata; `semanticsVerified:false` concerns attendance assignment, not whether nearby records were returned. Tests use synthetic fetch mocks. Live Zillapi validation for this change was **NOT RUN**; no paid requests were made by the agent.
+
+See [provider findings](docs/provider-capabilities.md#nearby-schools-scope-revision--2026-10-14) for current limits and caching/licensing assumptions.
 
 ## Prerequisites
 
@@ -104,7 +107,7 @@ Integration tests use a temporary schema inside the dedicated PPI database and r
 
 - A prototype, not a formal appraisal or a statistically validated AVM. The simple pricing model requires agent review.
 - Hazard context is informational; mapped faults do not predict earthquakes or establish structural safety or insurance obligations. GIS coverage is California-specific.
-- School assignment depends on verified provider data and is currently unavailable in production.
+- Nearby schools are informational third-party data; attendance eligibility, completeness and school coordinates remain unverified.
 - Grocery Places data is transient and cannot be reopened from saved analysis History.
 - The AI claim validator is conservative and rule based; it cannot prove every natural-language statement correct.
 - ArcGIS requires online basemap access and has sizable SDK chunks. The offline demo verifies schematic interaction, not live rendering or provider entitlement.

@@ -7,14 +7,14 @@ import type { PropertyService } from './properties/service.js';
 import { PropertyError } from './properties/service.js';
 import { propertyRouter } from './properties/routes.js';
 import type { MarketEvidenceService } from './market/service.js';
-import type { AssignedSchoolsService } from './context/schools.js';
+import type { NearbySchoolsService } from './context/schools.js';
 import type { GroceryContextService } from './context/grocery.js';
 import type { HazardContextService } from './context/hazards.js';
 import type { PricingPreviewService } from './pricing/service.js';
 import type { AnalysisService } from './analysis/service.js';
 import { analysisRouter } from './analysis/routes.js';
 
-export function createApp(options: { checkDatabase: CheckDatabase; origins: string[]; propertyService?: PropertyService; marketService?: MarketEvidenceService; schoolsService?: AssignedSchoolsService; groceryService?: GroceryContextService; hazardService?: HazardContextService; pricingService?: PricingPreviewService; analysisService?: AnalysisService; log?: (entry: { code: string; requestId: string }) => void }) {
+export function createApp(options: { checkDatabase: CheckDatabase; origins: string[]; propertyService?: PropertyService; marketService?: MarketEvidenceService; schoolsService?: NearbySchoolsService; groceryService?: GroceryContextService; hazardService?: HazardContextService; pricingService?: PricingPreviewService; analysisService?: AnalysisService; log?: (entry: { code: string; requestId: string }) => void }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());

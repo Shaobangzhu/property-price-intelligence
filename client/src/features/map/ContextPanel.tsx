@@ -1,8 +1,8 @@
-import type { AssignedSchoolsResponse, FaultContextResponse, GroceryResponse, MapContext, WildfireContextResponse } from '@ppi/shared';
+import type { NearbySchoolsResponse, FaultContextResponse, GroceryResponse, MapContext, WildfireContextResponse } from '@ppi/shared';
 import { FeedbackState } from '../../components/FeedbackState.js';
 
-export type ContextState = { propertyId: string; context: MapContext; status: 'loading' | 'ready' | 'error'; errorCode?: string; schools: AssignedSchoolsResponse | null; grocery: GroceryResponse | null; wildfire: WildfireContextResponse | null; faults: FaultContextResponse | null };
-const titles: Record<MapContext, string> = { schools: 'Assigned Schools', grocery: 'Grocery nearby', wildfire: 'Wildfire Context', faults: 'Earthquake Fault Context' };
+export type ContextState = { propertyId: string; context: MapContext; status: 'loading' | 'ready' | 'error'; errorCode?: string; schools: NearbySchoolsResponse | null; grocery: GroceryResponse | null; wildfire: WildfireContextResponse | null; faults: FaultContextResponse | null };
+const titles: Record<MapContext, string> = { schools: 'Nearby Schools', grocery: 'Grocery nearby', wildfire: 'Wildfire Context', faults: 'Earthquake Fault Context' };
 const levels = ['ELEMENTARY', 'MIDDLE', 'HIGH', 'OTHER'] as const;
 
 export function ContextPanel({ activeContext, state, selectedId, onSelect }: { activeContext: MapContext | null; state: ContextState | null; selectedId: string | null; onSelect: (id: string) => void }) {
@@ -11,17 +11,7 @@ export function ContextPanel({ activeContext, state, selectedId, onSelect }: { a
     {!activeContext && <FeedbackState kind="empty" title="No context selected" message="Choose one context layer to see its availability. All layers can be off." compact />}
     {activeContext && (!current || current.status === 'loading') && <FeedbackState kind="loading" title="Loading context" message="Checking availability for this property." compact />}
     {activeContext && current?.status === 'error' && (activeContext === 'schools' ? <SchoolRequestError code={current.errorCode} /> : <FeedbackState kind="error" title="Context unavailable" message="The context request failed. Select the layer again to retry." compact />)}
-    {activeContext === 'schools' && current?.status === 'ready' && current.schools?.status === 'SOURCE_UNAVAILABLE' &&
-      <FeedbackState kind="empty" title="School assignments not connected" message="A verified school-assignment source is not connected. This does not mean the property has no assigned schools." compact />}
-    {activeContext === 'schools' && current?.status === 'ready' && current.schools?.status === 'ASSIGNMENT_UNAVAILABLE' &&
-      <FeedbackState kind="empty" title="Assignment unavailable" message="The school-assignment source returned no assignment information for this property." compact />}
-    {activeContext === 'schools' && current?.status === 'ready' && current.schools?.status === 'PROVIDER_ERROR' && <SchoolRequestError />}
-    {activeContext === 'schools' && current?.status === 'ready' && current.schools && current.schools.schools.length > 0 && <div className="context-results">
-      <p className="context-source">Assignments: {current.schools.assignmentSource}. Only verified assignments appear here.</p>
-      {current.schools.status === 'UNMATCHED' && <p className="context-source">School locations could not be matched; no school markers are shown.</p>}
-      {current.schools.status === 'PARTIAL' && <p className="context-source">Some school locations could not be matched; only resolved schools have markers.</p>}
-      {levels.map(level => { const schools = current.schools!.schools.filter(school => school.assignmentLevel === level); return schools.length ? <div className="context-group" key={level}><h3>{level.charAt(0) + level.slice(1).toLowerCase()}</h3><ul className="context-list">{schools.map(school => <li key={school.id}><button type="button" className="context-result" aria-label={`Select assigned school ${school.name}`} aria-pressed={selectedId === school.id} onClick={() => onSelect(school.id)}><strong>{school.name}</strong><span>{school.district ?? 'District unavailable'} · {school.grades ?? 'Grades unavailable'}</span><small>{school.distanceMiles === null ? 'Distance unavailable' : `${school.distanceMiles.toFixed(2)} mi`} · {school.metadataSource ? `Metadata: ${school.metadataSource}` : 'Assignment source only'}{school.matchStatus === 'UNMATCHED' ? ' · Reference unmatched' : ''}</small></button></li>)}</ul></div> : null; })}
-    </div>}
+    {activeContext === 'schools' && current?.status === 'ready' && current.schools && <SchoolResults data={current.schools} selectedId={selectedId} onSelect={onSelect} />}
     {activeContext === 'grocery' && current?.status === 'ready' && current.grocery && <GroceryResults data={current.grocery} selectedId={selectedId} onSelect={onSelect} />}
     {activeContext === 'wildfire' && current?.status === 'ready' && current.wildfire && <WildfireResults data={current.wildfire} />}
     {activeContext === 'faults' && current?.status === 'ready' && current.faults && <FaultResults data={current.faults} />}
@@ -29,9 +19,31 @@ export function ContextPanel({ activeContext, state, selectedId, onSelect }: { a
 }
 
 function SchoolRequestError({ code }: { code?: string }) {
-  const malformed = code === 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED' || code === 'SCHOOL_ASSIGNMENT_RESPONSE_INVALID' || code === 'CONTEXT_PROPERTY_MISMATCH';
+  const malformed = code === 'SCHOOL_PROVIDER_MALFORMED' || code === 'SCHOOL_RESPONSE_INVALID' || code === 'CONTEXT_PROPERTY_MISMATCH';
+  const messages: Record<string, string> = {
+    SCHOOL_PROVIDER_AUTH: 'Zillapi authentication or access failed.',
+    SCHOOL_PROVIDER_CREDITS_EXHAUSTED: 'Zillapi credits are exhausted.',
+    SCHOOL_PROVIDER_RATE_LIMIT: 'Zillapi is rate limited. Try again later.',
+    SCHOOL_PROVIDER_BUSY: 'Another school lookup is in progress. Try again later.',
+    SCHOOL_PROVIDER_TIMEOUT: 'The school provider timed out.',
+    SCHOOL_PROVIDER_SUBJECT_MISMATCH: 'The provider returned a different property. School results were rejected.'
+  };
   return <FeedbackState kind="error" title={malformed ? 'School response invalid' : 'School request failed'}
-    message={malformed ? 'School information could not be read safely. Select Schools again to retry.' : 'The school request failed. Select Schools again to retry.'} compact />;
+    message={malformed ? 'School information could not be read safely. Select Schools again to retry.' : messages[code ?? ''] ?? 'The school request failed. Select Schools again to retry.'} compact />;
+}
+
+function SchoolResults({ data, selectedId, onSelect }: { data: NearbySchoolsResponse; selectedId: string | null; onSelect: (id: string) => void }) {
+  if (data.status === 'SOURCE_UNAVAILABLE') return <FeedbackState kind="empty" title="Nearby schools not connected" message="A nearby-school provider is not configured." compact />;
+  if (data.status === 'NO_RESULTS') return <FeedbackState kind="empty" title="No nearby schools returned" message="Zillapi returned an empty nearby-school list for this property. This does not establish school coverage or attendance eligibility." compact />;
+  if (data.status === 'DATA_UNAVAILABLE') return <FeedbackState kind="empty" title="School data unavailable" message="Zillapi did not provide nearby-school data for this property." compact />;
+  if (data.status === 'PROVIDER_ERROR') return <SchoolRequestError />;
+  const located = data.schools.filter(school => school.latitude !== null && school.longitude !== null).length;
+  return <div className="context-results">
+    <p className="context-source">Source: Zillapi (third-party property data)</p>
+    <p className="context-source">Nearby schools only. Attendance eligibility is not verified. Confirm with the local school district.</p>
+    {located < data.schools.length && <p className="context-source">{located === 0 ? 'School coordinates are unavailable; no school markers are shown.' : 'Only schools with coordinates have map markers.'}</p>}
+    {levels.map(level => { const schools = data.schools.filter(school => school.level === level); return schools.length ? <div className="context-group" key={level}><h3>{level.charAt(0) + level.slice(1).toLowerCase()}</h3><ul className="context-list">{schools.map(school => <li key={school.id}><button type="button" className="context-result" aria-label={`Select nearby school ${school.name}`} aria-pressed={selectedId === school.id} onClick={() => onSelect(school.id)}><strong>{school.name}</strong><span>{school.levelLabel ?? 'Level unavailable'} · {school.schoolType ?? 'Type unavailable'}</span><small>{school.distanceMiles === null ? 'Distance unavailable' : `${school.distanceMiles.toFixed(2)} mi`} · {school.rating === null ? 'Rating unavailable' : `Rating ${school.rating}/10`}</small></button></li>)}</ul></div> : null; })}
+  </div>;
 }
 
 const disclaimer = 'Map context is informational and is not an engineering, insurance, or hazard assessment.';

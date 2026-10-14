@@ -1,125 +1,113 @@
 import { describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { AssignedSchoolsResponse } from '@ppi/shared';
+import { NearbySchoolsResponse } from '@ppi/shared';
 import { createApp } from '../server/src/app.js';
 import type { PropertyService } from '../server/src/properties/service.js';
 import type { PropertyRepository, StoredRecord } from '../server/src/properties/repository.js';
-import { AssignedSchoolsService, UnavailableAssignmentSource, createAssignmentSource, matchSchool, type SchoolReference, type VerifiedAssignment } from '../server/src/context/schools.js';
+import { NearbySchoolsService, createSchoolProvider } from '../server/src/context/schools.js';
+import { ZillapiClient } from '../server/src/context/zillapi.js';
 import { ArcGisPlacesProvider, GroceryContextService, PlacesError, normalizeGroceryPlaces, parseGroceryPolicy, resolveGroceryCategoryIds } from '../server/src/context/grocery.js';
 import { getContextMarkers } from '../client/src/features/map/contextMarkers.js';
 
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const subject = { property: { id, latitude: 30.1, longitude: -97.1 }, snapshot: null } as unknown as StoredRecord;
-const assignment: VerifiedAssignment = { assignmentLevel: 'ELEMENTARY', sourceSchoolId: 'school-1', name: 'Oak Elementary', district: 'Austin ISD', city: 'Austin', latitude: null, longitude: null, grades: null, schoolType: null };
-const reference: SchoolReference = { sourceId: 'school-1', name: 'Oak Elementary', district: 'Austin ISD', city: 'Austin', latitude: 30.11, longitude: -97.11, grades: 'K–5', schoolType: 'Public', source: 'REFERENCE' };
+const address = '123 Example Street Apt 4, Sample City, CA 90000';
+const subject = { property: { id, formattedAddress: address, latitude: 30.1, longitude: -97.1 }, snapshot: null } as unknown as StoredRecord;
 function repository(record: StoredRecord | null = subject) {
   return { findById: vi.fn(async () => record), saveProfile: vi.fn(), patch: vi.fn(), delete: vi.fn(), markRefreshFailed: vi.fn() } as unknown as PropertyRepository;
 }
+const property = { zpid: '123456', address: { streetAddress: '123 Example St #4', city: 'Sample City', state: 'CA', zipcode: '90000' } };
+const nearby = { name: 'Synthetic Nearby School', level: 'Elementary', rating: 7, distance: 0.4, type: 'public' };
+function schoolApp(provider: ZillapiClient | null, repo = repository(), log = vi.fn()) {
+  return createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
+    schoolsService: new NearbySchoolsService(repo, provider), log });
+}
 
-describe('assigned school boundary', () => {
-  it.each(['unavailable', 'zillapi'] as const)('keeps %s disconnected through the existing endpoint without paid fetches', async provider => {
-    const fetch = vi.fn();
-    vi.stubGlobal('fetch', fetch);
-    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
-      schoolsService: new AssignedSchoolsService(repository(), createAssignmentSource({ SCHOOL_ASSIGNMENT_PROVIDER: provider, ZILLAPI_API_KEY: 'synthetic-key' })) });
-    const response = await request(app).get(`/api/properties/${id}/assigned-schools`);
-    expect(response.status).toBe(200);
-    const result = AssignedSchoolsResponse.parse(response.body);
-    expect(result).toEqual({ propertyId: id, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null });
-    expect(getContextMarkers('schools', result, null)).toEqual([]);
-    expect(fetch).not.toHaveBeenCalled();
-  });
-  it('shows unavailable when there is no verified assignment source, even with a nearby reference', async () => {
-    const refs = { lookup: vi.fn(async () => [reference]) };
-    const service = new AssignedSchoolsService(repository(), new UnavailableAssignmentSource(), refs);
-    expect(await service.get(id)).toEqual({ propertyId: id, status: 'SOURCE_UNAVAILABLE', schools: [], assignmentSource: null });
-    expect(refs.lookup).not.toHaveBeenCalled();
+describe('nearby school context', () => {
+  it('selects Zillapi without making requests on startup, and retains unavailable config', async () => {
+    const transport = vi.fn(); vi.stubGlobal('fetch', transport);
+    const provider = createSchoolProvider({ SCHOOL_ASSIGNMENT_PROVIDER: 'zillapi', ZILLAPI_API_KEY: 'synthetic-key' });
+    expect(provider).toBeInstanceOf(ZillapiClient);
+    expect(transport).not.toHaveBeenCalled();
+    const response = await request(schoolApp(createSchoolProvider({ SCHOOL_ASSIGNMENT_PROVIDER: 'unavailable', ZILLAPI_API_KEY: '' })))
+      .get(`/api/properties/${id}/nearby-schools`);
+    expect(NearbySchoolsResponse.parse(response.body)).toEqual({ propertyId: id, status: 'SOURCE_UNAVAILABLE', schools: [], source: null });
+    expect(transport).not.toHaveBeenCalled();
   });
 
-  it.each([null, { source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [] }])('reserves assignment unavailable for a successful empty result', async result => {
-    const service = new AssignedSchoolsService(repository(), { get: async () => result });
-    expect((await service.get(id)).status).toBe('ASSIGNMENT_UNAVAILABLE');
-  });
-
-  it('preserves multiple verified identities and all levels in the internal source contract, without inventing coordinates', async () => {
-    const schools = (['ELEMENTARY', 'ELEMENTARY', 'MIDDLE', 'HIGH'] as const).map((assignmentLevel, index) => ({
-      ...assignment, assignmentLevel, sourceSchoolId: `synthetic-${index}`, name: `Synthetic school ${index}`,
-      district: null, city: null
-    }));
-    const result = await new AssignedSchoolsService(repository(), { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools }) }).get(id);
-    expect(AssignedSchoolsResponse.parse(result).status).toBe('UNMATCHED');
-    expect(result.schools.map(school => school.assignmentLevel)).toEqual(['ELEMENTARY', 'ELEMENTARY', 'MIDDLE', 'HIGH']);
-    expect(new Set(result.schools.map(school => school.id)).size).toBe(4);
-    expect(result.schools.every(school => school.latitude === null && school.longitude === null && school.district === null)).toBe(true);
-    expect(getContextMarkers('schools', result, null)).toEqual([]);
-  });
-
-  it.each([undefined, {}, [], { source: '', schools: [assignment] }, { source: 'SYNTHETIC', schools: {} },
-    { source: 'SYNTHETIC', schools: [null] }, { source: 'SYNTHETIC', schools: [{ ...assignment, name: '' }] },
-    { source: 'SYNTHETIC', schools: [{ ...assignment, latitude: 180 }] }])('rejects malformed assignment results before enrichment', async result => {
-    const refs = { lookup: vi.fn() };
-    const service = new AssignedSchoolsService(repository(), { get: async () => result }, refs);
-    await expect(service.get(id)).rejects.toMatchObject({ code: 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED', status: 502 });
-    expect(refs.lookup).not.toHaveBeenCalled();
-  });
-
-  it('enriches only verified identities and leaves ambiguous reference matches unmatched', async () => {
-    const source = { get: vi.fn(async () => ({ source: 'VERIFIED_PROVIDER', schools: [assignment] })) };
-    const refs = { lookup: vi.fn(async () => [reference, { ...reference, sourceId: 'school-2' }]) };
-    const service = new AssignedSchoolsService(repository(), source, refs);
-    const result = await service.get(id);
-    expect(result.schools).toHaveLength(1);
-    expect(result.schools[0]).toMatchObject({ name: 'Oak Elementary', assignmentSource: 'VERIFIED_PROVIDER', matchStatus: 'EXACT_ID', metadataSource: 'REFERENCE', latitude: 30.11 });
-    const ambiguous = matchSchool({ ...assignment, sourceSchoolId: null }, await refs.lookup());
-    expect(ambiguous).toEqual({ reference: null, status: 'UNMATCHED' });
-    expect(getContextMarkers('schools', result, null)).toHaveLength(1);
-    expect(getContextMarkers('grocery', result, null)).toHaveLength(0);
-    expect(getContextMarkers('schools', { ...result, status: 'ASSIGNMENT_UNAVAILABLE' }, null)).toEqual([]);
-  });
-
-  it('does not select a nearby but nonmatching school', async () => {
-    const refs = { lookup: vi.fn(async () => [{ ...reference, sourceId: 'other', name: 'Pine Elementary' }]) };
-    const service = new AssignedSchoolsService(repository(), { get: async () => ({ source: 'VERIFIED_PROVIDER', schools: [assignment] }) }, refs);
-    const result = await service.get(id);
-    expect(result.status).toBe('UNMATCHED');
-    expect(result.schools[0]).toMatchObject({ name: 'Oak Elementary', latitude: null, longitude: null, matchStatus: 'UNMATCHED' });
-    expect(getContextMarkers('schools', result, null)).toEqual([]);
-  });
-
-  it('degrades assignment-source failure and keeps verified identities when enrichment fails', async () => {
-    const unavailable = new AssignedSchoolsService(repository(), { get: async () => { throw new Error('offline'); } });
-    await expect(unavailable.get(id)).rejects.toMatchObject({ code: 'SCHOOL_ASSIGNMENT_PROVIDER_ERROR', status: 502 });
-    const partial = new AssignedSchoolsService(repository(), { get: async () => ({ source: 'VERIFIED_PROVIDER', schools: [assignment] }) },
-      { lookup: async () => { throw new Error('offline'); } });
-    const result = await partial.get(id);
-    expect(result.status).toBe('UNMATCHED');
-    expect(result.schools[0]).toMatchObject({ name: assignment.name, assignmentSource: 'VERIFIED_PROVIDER', latitude: null, longitude: null });
-  });
-
-  it('preserves verified schools through HTTP serialization and the shared response schema', async () => {
+  it('loads the saved subject and exposes only nearby metadata through the renamed HTTP contract', async () => {
+    const transport = vi.fn<typeof fetch>(async () => Response.json({ data: { ...property, schools: [nearby, { ...nearby, name: 'Second Nearby School' }], owner: 'discard' } }));
     const repo = repository();
-    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
-      schoolsService: new AssignedSchoolsService(repo, { get: async () => ({ source: 'SYNTHETIC_VERIFIED_ADAPTER', schools: [assignment] }) }, { lookup: async () => [reference] }) });
-    const response = await request(app).get(`/api/properties/${id}/assigned-schools`);
+    const app = schoolApp(new ZillapiClient('synthetic-key', transport), repo);
+    const response = await request(app).get(`/api/properties/${id}/nearby-schools`);
     expect(response.status).toBe(200);
-    expect(AssignedSchoolsResponse.parse(response.body)).toMatchObject({ propertyId: id, status: 'AVAILABLE',
-      schools: [{ name: assignment.name, sourceSchoolId: assignment.sourceSchoolId, latitude: reference.latitude }] });
+    expect(response.headers['cache-control']).toContain('no-store');
+    const result = NearbySchoolsResponse.parse(response.body);
+    expect(result).toMatchObject({ propertyId: id, status: 'AVAILABLE', source: 'ZILLAPI', schools: [
+      { name: nearby.name, level: 'ELEMENTARY', schoolType: 'public', rating: 7, distanceMiles: 0.4, latitude: null, longitude: null },
+      { name: 'Second Nearby School' }
+    ] });
+    expect(new URL(String(transport.mock.calls[0]![0])).searchParams.get('address')).toBe(address);
+    expect(getContextMarkers('schools', result, null)).toEqual([]);
+    expect(JSON.stringify(result)).not.toMatch(/assignment|discard|synthetic-key/);
     expect(repo.saveProfile).not.toHaveBeenCalled();
+    expect(repo.patch).not.toHaveBeenCalled();
+    expect((await request(app).get(`/api/properties/${id}/nearby-schools`)).status).toBe(200);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect((await request(app).get(`/api/properties/${id}/assigned-schools`)).status).toBe(404);
   });
 
-  it.each(['failure', 'malformed'] as const)('returns an observable sanitized 502 for %s', async scenario => {
-    const log = vi.fn();
-    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService, log,
-      schoolsService: new AssignedSchoolsService(repository(), { get: async () => {
-        if (scenario === 'failure') throw new Error('synthetic-secret-do-not-log');
-        return { source: 'synthetic-secret-do-not-log', schools: 'invalid' };
-      } }) });
-    const response = await request(app).get(`/api/properties/${id}/assigned-schools`);
-    const code = scenario === 'failure' ? 'SCHOOL_ASSIGNMENT_PROVIDER_ERROR' : 'SCHOOL_ASSIGNMENT_PROVIDER_MALFORMED';
+  it('requires a saved subject and never spends credits for an invalid or missing property', async () => {
+    const transport = vi.fn<typeof fetch>();
+    const app = schoolApp(new ZillapiClient('synthetic-key', transport), repository(null));
+    expect((await request(app).get(`/api/properties/${id}/nearby-schools`)).status).toBe(404);
+    expect((await request(app).get('/api/properties/invalid/nearby-schools')).status).toBe(400);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes an explicit empty list from missing school data', async () => {
+    for (const [data, status] of [[{ ...property, schools: [] }, 'NO_RESULTS'], [{ address: property.address }, 'DATA_UNAVAILABLE']] as const) {
+      const transport = vi.fn<typeof fetch>(async () => Response.json({ data }));
+      const result = await new NearbySchoolsService(repository(), new ZillapiClient('synthetic-key', transport)).get(id);
+      expect(NearbySchoolsResponse.parse(result).status).toBe(status);
+      expect(transport).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('does not spend credits when a saved unit conflicts with the formatted address', async () => {
+    const transport = vi.fn<typeof fetch>();
+    const conflicting = { ...subject, property: { ...subject.property, unit: 'Apt 5' } };
+    const response = await request(schoolApp(new ZillapiClient('synthetic-key', transport), repository(conflicting)))
+      .get(`/api/properties/${id}/nearby-schools`);
     expect(response.status).toBe(502);
-    expect(response.body.error).toMatchObject({ code, requestId: expect.any(String) });
-    expect(log).toHaveBeenCalledWith({ code, requestId: response.body.error.requestId });
-    expect(JSON.stringify([response.body, log.mock.calls])).not.toContain('synthetic-secret-do-not-log');
+    expect(response.body.error.code).toBe('SCHOOL_PROVIDER_SUBJECT_MISMATCH');
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('rejects untrusted origins before any paid school lookup', async () => {
+    const transport = vi.fn<typeof fetch>();
+    const response = await request(schoolApp(new ZillapiClient('synthetic-key', transport)))
+      .get(`/api/properties/${id}/nearby-schools`).set('Origin', 'https://untrusted.example');
+    expect(response.status).toBe(403);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 402, 429, 500])('preserves sanitized HTTP %s failure instead of reporting no schools', async status => {
+    const transport = vi.fn<typeof fetch>(async () => new Response('synthetic-secret', { status }));
+    const log = vi.fn();
+    const response = await request(schoolApp(new ZillapiClient('synthetic-key', transport), repository(), log)).get(`/api/properties/${id}/nearby-schools`);
+    expect(response.status).toBe(status === 429 ? 503 : 502);
+    expect(response.body.error.code).toBe(`SCHOOL_PROVIDER_${status === 401 ? 'AUTH' : status === 402 ? 'CREDITS_EXHAUSTED' : status === 429 ? 'RATE_LIMIT' : 'UPSTREAM'}`);
+    expect(JSON.stringify([response.body, log.mock.calls])).not.toMatch(/synthetic-secret|synthetic-key/);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects address mismatch and malformed responses observably', async () => {
+    for (const [data, code] of [[{ ...property, address: { ...property.address, streetAddress: '124 Example St #4' } }, 'SUBJECT_MISMATCH'], [{ schools: [] }, 'MALFORMED']] as const) {
+      const response = await request(schoolApp(new ZillapiClient('synthetic-key', vi.fn<typeof fetch>(async () => Response.json({ data })))))
+        .get(`/api/properties/${id}/nearby-schools`);
+      expect(response.status).toBe(502);
+      expect(response.body.error.code).toBe(`SCHOOL_PROVIDER_${code}`);
+    }
   });
 });
 

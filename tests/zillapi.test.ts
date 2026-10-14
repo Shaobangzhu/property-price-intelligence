@@ -10,6 +10,23 @@ const key = 'synthetic-server-secret';
 const transportFor = (value: unknown) => vi.fn<typeof fetch>(async () => Response.json(value));
 
 describe('Zillapi isolated diagnostic', () => {
+  it('projects nearby records without assignment claims, invented coordinates or unrelated provider fields', async () => {
+    const transport = transportFor({ data: { ...property, schools: [nearby, { name: 'Unknown level school', level: 'Combined', owner: key }], owner: key } });
+    const result = await new ZillapiClient(key, transport).lookupSchools(address);
+    expect(result.schools).toEqual([
+      { id: expect.stringMatching(/^school:/), name: nearby.name, level: 'ELEMENTARY', levelLabel: 'Elementary', schoolType: 'public',
+        rating: 7, distanceMiles: 0.4, latitude: null, longitude: null },
+      { id: expect.stringMatching(/^school:/), name: 'Unknown level school', level: 'OTHER', levelLabel: 'Combined', schoolType: null,
+        rating: null, distanceMiles: null, latitude: null, longitude: null }
+    ]);
+    expect(JSON.stringify(result.schools)).not.toMatch(/assignment|synthetic-server-secret|owner|district|grades/);
+  });
+
+  it.each([['Elementary', 'ELEMENTARY'], ['Middle', 'MIDDLE'], ['High', 'HIGH']])('groups documented %s levels as %s', async (label, level) => {
+    const result = await new ZillapiClient(key, transportFor({ data: { ...property, schools: [{ ...nearby, level: label }] } })).lookupSchools(address);
+    expect(result.schools?.[0]?.level).toBe(level);
+  });
+
   it('authenticates on the fixed HTTPS endpoint, encodes addresses and projects schools in one request', async () => {
     const transport = transportFor({ data: { ...property, schools: [nearby], owner: 'discard' } });
     const result = await new ZillapiClient(key, transport).inspectSchools(address);
@@ -143,7 +160,7 @@ describe('Zillapi isolated diagnostic', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it('coalesces same-subject requests, rejects cross-subject concurrency and expires only safe metadata after ten minutes', async () => {
+  it('coalesces same-subject requests, rejects cross-subject concurrency and expires its bounded projection after ten minutes', async () => {
     let time = 0;
     let release!: (value: Response) => void;
     const transport = vi.fn<typeof fetch>(() => new Promise(resolve => { release = resolve; }));

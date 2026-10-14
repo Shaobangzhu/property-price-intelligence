@@ -96,22 +96,22 @@ export type MarketEvidenceGroup = z.infer<typeof MarketEvidenceGroup>;
 export const MarketContextResponse = z.object({ propertyId: PropertyId, recordedSales: MarketEvidenceGroup, activeListings: MarketEvidenceGroup });
 export type MarketContextResponse = z.infer<typeof MarketContextResponse>;
 
-export const AssignmentLevel = z.enum(['ELEMENTARY', 'MIDDLE', 'HIGH', 'OTHER']);
-export const SchoolMatchStatus = z.enum(['EXACT_ID', 'NAME_DISTRICT', 'NAME_CITY', 'UNMATCHED']);
-export const AssignedSchool = z.object({
-  id: z.string().min(1), assignmentLevel: AssignmentLevel, sourceSchoolId: z.string().nullable(),
-  name: z.string().min(1), district: z.string().nullable(), city: z.string().nullable(),
-  latitude: NullableNumber, longitude: NullableNumber, grades: z.string().nullable(), schoolType: z.string().nullable(),
-  distanceMiles: NullableNumber, assignmentSource: z.string().min(1), metadataSource: z.string().nullable(), matchStatus: SchoolMatchStatus
+export const SchoolLevel = z.enum(['ELEMENTARY', 'MIDDLE', 'HIGH', 'OTHER']);
+export const NearbySchool = z.object({
+  id: z.string().min(1), name: z.string().trim().min(1).max(250), level: SchoolLevel,
+  levelLabel: z.string().nullable(), schoolType: z.string().nullable(),
+  rating: z.number().finite().min(0).max(10).nullable(),
+  distanceMiles: z.number().finite().nonnegative().nullable(),
+  latitude: z.number().finite().min(-90).max(90).nullable(), longitude: z.number().finite().min(-180).max(180).nullable()
 });
-export type AssignedSchool = z.infer<typeof AssignedSchool>;
-export const AssignedSchoolsResponse = z.object({
-  propertyId: PropertyId, status: z.enum(['SOURCE_UNAVAILABLE', 'ASSIGNMENT_UNAVAILABLE', 'AVAILABLE', 'PARTIAL', 'UNMATCHED', 'PROVIDER_ERROR']),
-  schools: z.array(AssignedSchool), assignmentSource: z.string().nullable()
-}).refine(value => ['AVAILABLE', 'PARTIAL', 'UNMATCHED'].includes(value.status)
-  ? value.schools.length > 0 && !!value.assignmentSource?.trim()
+export type NearbySchool = z.infer<typeof NearbySchool>;
+export const NearbySchoolsResponse = z.object({
+  propertyId: PropertyId, status: z.enum(['SOURCE_UNAVAILABLE', 'DATA_UNAVAILABLE', 'NO_RESULTS', 'AVAILABLE', 'PROVIDER_ERROR']),
+  schools: z.array(NearbySchool).max(100), source: z.literal('ZILLAPI').nullable()
+}).refine(value => value.status === 'AVAILABLE'
+  ? value.schools.length > 0 && value.source === 'ZILLAPI'
   : value.schools.length === 0, 'School status and records must agree');
-export type AssignedSchoolsResponse = z.infer<typeof AssignedSchoolsResponse>;
+export type NearbySchoolsResponse = z.infer<typeof NearbySchoolsResponse>;
 
 export const GroceryPlace = z.object({
   id: z.string().min(1), name: z.string().min(1), category: z.string().nullable(),
