@@ -5,7 +5,7 @@ import type { MarketComparableCandidate, PropertyRecord } from '@ppi/shared';
 import { MapShell } from './MapShell.js';
 
 type Layer = { title: string; visible: boolean; graphics: unknown[]; destroy: () => void };
-type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn> };
+type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn>; openPopup: ReturnType<typeof vi.fn>; closePopup: ReturnType<typeof vi.fn> };
 const sdk = vi.hoisted(() => ({ views: [] as View[], layers: [] as Layer[], basemapFailure: false }));
 vi.mock('@arcgis/core/config.js', () => ({ default: { log: { level: 'none' }, apiKey: '' } }));
 vi.mock('@arcgis/core/Graphic.js', () => ({ default: class { constructor(value: object) { Object.assign(this, value); } } }));
@@ -32,6 +32,7 @@ vi.mock('@arcgis/core/views/MapView.js', () => ({ default: class {
   events: Record<string, (event: unknown) => void> = {};
   hitTest = vi.fn(async () => ({ results: [] }));
   goTo = vi.fn<(target: unknown, options?: unknown) => Promise<void>>(async () => {});
+  openPopup = vi.fn(async () => {}); closePopup = vi.fn();
   constructor() { sdk.views.push(this); }
   when() { return Promise.resolve(); }
   on(name: string, callback: (event: unknown) => void) { this.events[name] = callback; const remove = vi.fn(); this.handles.push(remove); return { remove }; }
@@ -173,4 +174,31 @@ it('shows a safe map fallback when basemap loading fails and cleans up its view'
   expect(JSON.stringify(warning.mock.calls)).not.toContain('DO_NOT_PRINT');
   view.unmount();
   expect(sdk.views[0]?.destroy).toHaveBeenCalledOnce();
+});
+
+it('selects grocery graphics/popups by place ID after reordering and clears stale popups on off', async () => {
+  const markers = [
+    { id: 'alpha', label: 'Synthetic Alpha Grocery', detail: '100 Test Ave · 0.1 mi straight-line', latitude: 37.001, longitude: -122.001, kind: 'grocery' as const },
+    { id: 'beta', label: 'Synthetic Beta Grocery', detail: '200 Test Ave · 0.3 mi straight-line', latitude: 37.003, longitude: -122.003, kind: 'grocery' as const },
+    { id: 'seven', label: 'Synthetic 7-Eleven', detail: '300 Test Ave · 0.4 mi straight-line', latitude: 37.004, longitude: -122.004, kind: 'grocery' as const }
+  ];
+  const select = vi.fn();
+  const rendered = render(<MapShell {...props} activeContext="grocery" contextMarkers={markers} selectedContextId="alpha" onSelectContext={select} />);
+  await waitFor(() => expect(sdk.views[0]?.openPopup).toHaveBeenCalledOnce());
+  const mapView = sdk.views[0]!;
+  for (const marker of [...markers].reverse()) {
+    rendered.rerender(<MapShell {...props} activeContext="grocery" contextMarkers={[...markers].reverse()} selectedContextId={marker.id} onSelectContext={select} />);
+    await waitFor(() => expect(mapView.openPopup.mock.lastCall?.[0].features[0].attributes.placeId).toBe(marker.id));
+    const graphic = mapView.openPopup.mock.lastCall![0].features[0];
+    expect(graphic.geometry).toEqual({ type: 'point', latitude: marker.latitude, longitude: marker.longitude });
+    expect(graphic.symbol.size).toBe(20);
+    expect(graphic.popupTemplate.content().textContent).toBe(`${marker.label} · ${marker.detail}`);
+    expect(mapView.openPopup.mock.lastCall![0].location).toBe(graphic.geometry);
+    mapView.hitTest.mockResolvedValue({ results: [{ graphic }] });
+    await act(async () => { mapView.events.click?.({}); });
+    expect(select).toHaveBeenLastCalledWith(marker.id);
+  }
+  rendered.rerender(<MapShell {...props} />);
+  expect(mapView.closePopup).toHaveBeenCalledOnce();
+  expect(sdk.layers.find(layer => layer.title === 'Selected Context')?.graphics).toEqual([]);
 });

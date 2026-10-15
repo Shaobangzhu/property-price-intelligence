@@ -66,12 +66,12 @@ function FaultResults({ data }: { data: FaultContextResponse }) {
 
 function GroceryResults({ data, selectedId, onSelect }: { data: GroceryResponse; selectedId: string | null; onSelect: (id: string) => void }) {
   const messages: Partial<Record<GroceryResponse['status'], string>> = {
-    NO_RESULTS: 'No grocery places were returned within the search radius.',
+    NO_RESULTS: 'No grocery places could be validated within the search radius.',
     NO_COORDINATES: 'This property has no coordinates for a nearby search.',
     CREDENTIAL_UNAVAILABLE: 'ArcGIS Places credential is missing or unavailable on the server.',
     RATE_LIMIT: 'ArcGIS Places is rate limited. Try again later.',
     PROVIDER_ERROR: 'ArcGIS Places could not return grocery places. Try again later.'
   };
   if (data.status !== 'AVAILABLE') return <FeedbackState kind={data.status === 'NO_RESULTS' || data.status === 'NO_COORDINATES' ? 'empty' : 'error'} title={data.status === 'NO_RESULTS' ? 'No places found' : 'Grocery unavailable'} message={messages[data.status] ?? 'Grocery unavailable.'} compact />;
-  return <div className="context-results"><p className="context-source">ArcGIS Places · within {(data.radiusMeters / 1609.344).toFixed(1)} mi · on demand</p><ul className="context-list">{data.places.map(place => <li key={place.id}><button type="button" className="context-result" aria-label={`Select grocery ${place.name}`} aria-pressed={selectedId === place.id} onClick={() => onSelect(place.id)}><strong>{place.name}</strong><span>{place.category ?? 'Grocery'}</span><small>{place.distanceMiles === null ? 'Distance unavailable' : `${place.distanceMiles.toFixed(2)} mi`}</small></button></li>)}</ul></div>;
+  return <div className="context-results"><p className="context-source">ArcGIS Places · within {(data.radiusMeters / 1609.344).toFixed(1)} mi · on demand · straight-line distance</p><ul className="context-list">{data.places.map(place => <li key={place.id}><button type="button" className="context-result" aria-label={`Select grocery ${place.name}`} aria-pressed={selectedId === place.id} onClick={() => onSelect(place.id)}><strong>{place.name}</strong><span>{place.category ?? 'Grocery'}</span>{place.address && <span>{place.address}</span>}<small>{place.distanceMiles === null ? 'Distance unavailable' : `${place.distanceMiles.toFixed(2)} mi`}</small></button></li>)}</ul></div>;
 }

@@ -41,7 +41,7 @@ export function demoMarket(propertyId = DEMO_ID, insufficient = false): MarketCo
 
 export type MockOptions = {
   resolveFailure?: 'PROVIDER_UNAVAILABLE' | 'PROVIDER_MALFORMED' | 'DATABASE_UNAVAILABLE';
-  contextFailures?: boolean; schoolLocations?: boolean; aiFailure?: boolean; insufficient?: boolean;
+  contextFailures?: boolean; schoolLocations?: boolean; groceryIdentity?: boolean; aiFailure?: boolean; insufficient?: boolean;
   beforeResponse?: (pathname: string, requestBody: unknown) => Promise<void>;
 };
 
@@ -118,7 +118,9 @@ export async function installMockApi(page: Page, options: MockOptions = {}, orig
       ] }
       : { propertyId: id, status: options.contextFailures ? 'PROVIDER_ERROR' : 'NO_RESULTS', schools: [], source: null };
     else if (url.pathname.endsWith('/nearby-places')) body = { propertyId: id, status: options.contextFailures ? 'PROVIDER_ERROR' : 'AVAILABLE', source: 'ARCGIS_PLACES', radiusMeters: 1600,
-      places: options.contextFailures ? [] : [{ id: 'synthetic-grocery', name: id === SECOND_ID ? 'Synthetic Crescent Grocery' : 'Synthetic Demo Grocery', category: 'Grocery Store', latitude: 37.853, longitude: -122.203, distanceMiles: 0.4, source: 'ARCGIS_PLACES' }] };
+      places: options.contextFailures ? [] : options.groceryIdentity && id === DEMO_ID
+        ? ['Synthetic 7-Eleven', 'Synthetic Alpha Grocery', 'Synthetic Beta Grocery'].map((name, index) => ({ id: `synthetic-grocery-${index}`, name, category: 'Grocery Store', address: `${100 + index} Synthetic Ave, Demo City, CA`, latitude: 37.851 + index * 0.001, longitude: -122.201, distanceMiles: 0.1 + index * 0.1, source: 'ARCGIS_PLACES' }))
+        : [{ id: 'synthetic-grocery', name: id === SECOND_ID ? 'Synthetic Crescent Grocery' : 'Synthetic Demo Grocery', category: 'Grocery Store', latitude: 37.853, longitude: -122.203, distanceMiles: 0.4, source: 'ARCGIS_PLACES' }] };
     else if (url.pathname.endsWith('/wildfire-context')) body = { propertyId: id, status: options.contextFailures ? 'UNAVAILABLE' : 'INSIDE_DISPLAYED_ZONE', classification: options.contextFailures ? null : 'High', responsibilityArea: options.contextFailures ? null : 'SRA', sourceName: 'CAL FIRE Fire Hazard Severity Zones', sourceVersion: 'Synthetic scenario; not a real parcel result', checkedAt: DEMO_NOW };
     else if (url.pathname.endsWith('/fault-context')) body = { propertyId: id, contextType: 'FAULT_TRACE', status: options.contextFailures ? 'UNAVAILABLE' : 'NEAREST_MAPPED_FAULT', nearestFeatureName: options.contextFailures ? null : 'Synthetic mapped fault trace', distanceMiles: options.contextFailures ? null : 7.13, searchRadiusMiles: 20, sourceName: 'California Geological Survey Quaternary Faults', sourceVersion: 'Synthetic scenario; not a real parcel result', checkedAt: DEMO_NOW };
     else if (url.pathname.endsWith('/analyses') && method === 'POST') { stats.analysisRequests++; body = makeRun(record, PricingPreviewRequest.parse(payload)); }

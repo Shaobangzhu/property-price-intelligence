@@ -8,7 +8,7 @@ export function getContextMarkers(context: MapContext | null, schools: NearbySch
     latitude: school.latitude, longitude: school.longitude, kind: 'school' as const
   }]);
   if (context === 'grocery') return (grocery?.status === 'AVAILABLE' ? grocery.places : []).map(place => ({ id: place.id, label: place.name,
-    detail: `${place.category ?? 'Grocery'} · ${place.distanceMiles === null ? 'Distance unavailable' : `${place.distanceMiles.toFixed(2)} mi`}`,
+    detail: `${place.address ?? 'Address unavailable'} · ${place.category ?? 'Grocery'} · ${place.distanceMiles === null ? 'Distance unavailable' : `${place.distanceMiles.toFixed(2)} mi straight-line`}`,
     latitude: place.latitude, longitude: place.longitude, kind: 'grocery' as const }));
   return [];
 }

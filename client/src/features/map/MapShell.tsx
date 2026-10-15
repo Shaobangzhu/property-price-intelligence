@@ -156,18 +156,36 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         redraw.current = draw;
         draw();
         let schoolFitKey = '';
+        let groceryPopupId: string | null = null;
+        let groceryPopupRevision = 0;
+        let hadGroceryContext = false;
         const drawContext = () => {
+          const popupRevision = ++groceryPopupRevision;
+          const wasGroceryContext = hadGroceryContext;
+          hadGroceryContext = activeContextRef.current === 'grocery';
           contextLayer.removeAll();
+          const groceryGraphics = new globalThis.Map<string, InstanceType<typeof Graphic>>();
           const schoolGraphics: InstanceType<typeof Graphic>[] = [];
           for (const marker of contextData.current.contextMarkers) {
             const graphic = new Graphic({
             geometry: { type: 'point', latitude: marker.latitude, longitude: marker.longitude },
             symbol: { type: 'simple-marker', style: 'circle', size: marker.id === contextData.current.selectedContextId ? 20 : 14,
               color: marker.kind === 'school' ? '#7552a3' : '#bf5268', outline: { color: marker.id === contextData.current.selectedContextId ? '#172b43' : '#fff', width: marker.id === contextData.current.selectedContextId ? 3 : 1.5 } },
-            attributes: { id: marker.id, context: true }, popupTemplate: popup(marker.kind === 'school' ? 'Nearby school' : 'Grocery place', `${marker.label} · ${marker.detail}`)
+            attributes: { id: marker.id, placeId: marker.kind === 'grocery' ? marker.id : undefined, context: true }, popupTemplate: popup(marker.kind === 'school' ? 'Nearby school' : 'Grocery place', `${marker.label} · ${marker.detail}`)
             });
             contextLayer.add(graphic);
+            if (marker.kind === 'grocery') groceryGraphics.set(marker.id, graphic);
             if (marker.kind === 'school') schoolGraphics.push(graphic);
+          }
+          const selectedGrocery = activeContextRef.current === 'grocery' ? groceryGraphics.get(contextData.current.selectedContextId ?? '') : undefined;
+          if (selectedGrocery) {
+            groceryPopupId = String(selectedGrocery.attributes.placeId);
+            void view.when().then(() => {
+              if (!disposed && groceryPopupRevision === popupRevision) return view.openPopup({ features: [selectedGrocery], location: selectedGrocery.geometry as __esri.Point });
+            }).catch(() => {});
+          } else if (groceryPopupId !== null || wasGroceryContext || hadGroceryContext) {
+            groceryPopupId = null;
+            view.closePopup();
           }
           const key = activeContextRef.current === 'schools' && schoolGraphics.length
             ? `${data.current.subject.id}:${JSON.stringify(contextData.current.contextMarkers)}` : '';

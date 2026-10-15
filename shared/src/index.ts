@@ -115,7 +115,7 @@ export const NearbySchoolsResponse = z.object({
 export type NearbySchoolsResponse = z.infer<typeof NearbySchoolsResponse>;
 
 export const GroceryPlace = z.object({
-  id: z.string().min(1), name: z.string().min(1), category: z.string().nullable(),
+  id: z.string().min(1), name: z.string().min(1), category: z.string().nullable(), address: z.string().nullable().default(null),
   latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180),
   distanceMiles: z.number().nonnegative().nullable(), source: z.literal('ARCGIS_PLACES')
 });

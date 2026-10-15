@@ -151,21 +151,24 @@ describe('transient grocery context', () => {
   it('resolves exact grocery categories and allows only display fields through normalization', () => {
     expect(resolveGroceryCategoryIds({ categories: [{ categoryId, fullLabel: ['Shopping', 'Grocery Store'] }, { categoryId: 'bbbbbbbbbbbbbbbbbbbbbbbb', label: 'Restaurant' }] })).toEqual([categoryId]);
     const normalized = normalizeGroceryPlaces({ results: [place] }, 10);
-    expect(normalized).toEqual([{ id: 'place-1', name: 'Market One', category: 'Grocery Store', latitude: 30.11, longitude: -97.11, distanceMiles: 0.62, source: 'ARCGIS_PLACES' }]);
+    expect(normalized).toEqual([{ id: 'place-1', name: 'Market One', category: 'Grocery Store', address: null, latitude: 30.11, longitude: -97.11, distanceMiles: null, source: 'ARCGIS_PLACES' }]);
     expect(JSON.stringify(normalized)).not.toContain('rawContact');
   });
 
-  it('sends the server key only in Authorization, uses two bounded requests, and never writes Places data', async () => {
+  it('sends the server key only in Authorization, bounds discovery/details, and never writes Places data', async () => {
     const calls: { url: URL; init: RequestInit }[] = [];
     const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: new URL(String(input)), init: init! });
-      return Response.json(calls.length === 1 ? { categories: [{ categoryId, fullLabel: ['Shopping', 'Supermarket'] }] } : { results: [place] });
+      return Response.json(calls.length === 1 ? { categories: [{ categoryId, fullLabel: ['Shopping', 'Supermarket'] }] }
+        : calls.length === 2 ? { results: [place] } : { placeDetails: { ...place, address: { streetAddress: '123 Synthetic Ave', locality: 'Test City', region: 'TX' } } });
     }) as unknown as typeof fetch;
     const repo = repository();
     const service = new GroceryContextService(repo, new ArcGisPlacesProvider('synthetic-server-only-key', transport), parseGroceryPolicy({}));
     const result = await service.get(id);
     expect(result.status).toBe('AVAILABLE');
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]!.url.pathname.endsWith('/places/place-1')).toBe(true);
+    expect(result.places[0]).toMatchObject({ id: 'place-1', address: '123 Synthetic Ave, Test City, TX', distanceMiles: 0.91 });
     expect(calls[0]!.url.pathname.endsWith('/categories')).toBe(true);
     expect(calls[1]!.url.searchParams.get('x')).toBe('-97.1');
     expect(calls[1]!.url.searchParams.get('y')).toBe('30.1');
@@ -193,5 +196,27 @@ describe('transient grocery context', () => {
     expect((await error.get(id)).status).toBe('PROVIDER_ERROR');
     const noCoords = { property: { id, latitude: null, longitude: null }, snapshot: null } as unknown as StoredRecord;
     expect((await new GroceryContextService(repository(noCoords), { nearby: vi.fn() }, policy).get(id)).status).toBe('NO_COORDINATES');
+  });
+
+  it('serializes one complete validated grocery identity through HTTP without persistence or content logs', async () => {
+    const transport = vi.fn<typeof fetch>(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/categories')) return Response.json({ categories: [{ categoryId, label: 'Grocery Store' }] });
+      if (path.endsWith('/near-point')) return Response.json({ results: [place] });
+      return Response.json({ placeDetails: { ...place, address: { streetAddress: '123 Synthetic Ave', locality: 'Test City', region: 'TX' } } });
+    });
+    const repo = repository(), log = vi.fn();
+    const app = createApp({ checkDatabase: async () => true, origins: [], propertyService: {} as PropertyService,
+      groceryService: new GroceryContextService(repo, new ArcGisPlacesProvider('synthetic-server-only-key', transport), parseGroceryPolicy({})), log });
+    const response = await request(app).get(`/api/properties/${id}/nearby-places?category=grocery`);
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({ propertyId: id, status: 'AVAILABLE', places: [{ id: place.placeId, name: place.name,
+      address: '123 Synthetic Ave, Test City, TX', latitude: place.location.y, longitude: place.location.x, distanceMiles: 0.91 }] });
+    expect(JSON.stringify([response.body, log.mock.calls])).not.toMatch(/rawContact|discard me|synthetic-server-only-key/);
+    expect(JSON.stringify(log.mock.calls)).not.toContain(place.name);
+    expect(repo.saveProfile).not.toHaveBeenCalled();
+    expect(repo.patch).not.toHaveBeenCalled();
+    expect(repo.markRefreshFailed).not.toHaveBeenCalled();
   });
 });

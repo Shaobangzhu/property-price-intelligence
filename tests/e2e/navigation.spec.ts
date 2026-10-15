@@ -77,6 +77,33 @@ test('nearby school locations create selectable markers while unmatched schools 
   expect(mock.stats.unhandledApiRequests).toEqual([]);
 });
 
+test('grocery rows retain marker identity through selection, off/on and property switches', async ({ page }) => {
+  await installMockApi(page, { groceryIdentity: true });
+  await page.goto('/dashboard?mapTestMode=1');
+  await search(page);
+  const toggle = page.getByRole('button', { name: 'Grocery', exact: true });
+  await toggle.click();
+  await expect(page.getByText(/on demand · straight-line distance/)).toBeVisible();
+  for (const name of ['Synthetic Beta Grocery', 'Synthetic 7-Eleven', 'Synthetic Alpha Grocery']) {
+    const row = page.getByRole('button', { name: `Select grocery ${name}`, exact: true });
+    const marker = page.getByRole('button', { name: `Grocery marker: ${name}`, exact: true });
+    await row.click();
+    await expect(marker).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: /^Select grocery / }).and(page.locator('[aria-pressed="true"]'))).toHaveCount(1);
+    await marker.click(); await expect(row).toHaveAttribute('aria-pressed', 'true');
+  }
+  await toggle.click();
+  await expect(page.getByRole('button', { name: /Grocery marker:/ })).toHaveCount(0);
+  await toggle.click();
+  await expect(page.getByRole('button', { name: /Grocery marker:/ })).toHaveCount(3);
+  await search(page, SECOND_ADDRESS);
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Crescent Grocery' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Alpha Grocery' })).toHaveCount(0);
+  await search(page);
+  await expect(page.getByRole('button', { name: /Grocery marker:/ })).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Grocery marker: Synthetic Crescent Grocery' })).toHaveCount(0);
+});
+
 test('complete synthetic core workflow: contexts, deterministic Offer and Listing, exact History reopen, and CRUD', async ({ page }) => {
   const mock = await installMockApi(page);
   await test.step('1–3: Dashboard search and persisted subject summary', async () => {
