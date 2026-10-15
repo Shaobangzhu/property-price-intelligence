@@ -6,8 +6,9 @@ import { MapShell } from './MapShell.js';
 
 type Layer = { title: string; visible: boolean; graphics: unknown[]; destroy: () => void };
 type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn>; openPopup: ReturnType<typeof vi.fn>; closePopup: ReturnType<typeof vi.fn> };
-const sdk = vi.hoisted(() => ({ views: [] as View[], layers: [] as Layer[], basemapFailure: false }));
-vi.mock('@arcgis/core/config.js', () => ({ default: { log: { level: 'none' }, apiKey: '' } }));
+const sdk = vi.hoisted(() => ({ views: [] as View[], layers: [] as Layer[], basemaps: [] as object[], basemapFailure: false }));
+vi.mock('@arcgis/core/Basemap.js', () => ({ default: class { constructor(value: object) { sdk.basemaps.push(value); } } }));
+vi.mock('@arcgis/core/config.js', () => ({ default: { log: { level: 'none' }, apiKey: '', apiKeys: {} } }));
 vi.mock('@arcgis/core/Graphic.js', () => ({ default: class { constructor(value: object) { Object.assign(this, value); } } }));
 vi.mock('@arcgis/core/layers/GraphicsLayer.js', () => ({ default: class {
   title: string; visible: boolean; graphics: unknown[] = []; destroy = vi.fn();
@@ -17,7 +18,7 @@ vi.mock('@arcgis/core/layers/GraphicsLayer.js', () => ({ default: class {
 } }));
 vi.mock('@arcgis/core/layers/FeatureLayer.js', () => ({ default: class {
   title: string; visible = true; graphics: unknown[] = []; destroy = vi.fn();
-  constructor(value: { title: string }) { this.title = value.title; sdk.layers.push(this); }
+  constructor(value: { title: string }) { this.title = value.title; Object.assign(this, value); sdk.layers.push(this); }
   queryFeatures() { return Promise.resolve({ exceededTransferLimit: false, features: [{ attributes: { FHSZ_Description: 'High' }, geometry: { type: 'polygon' } }] }); }
 } }));
 vi.mock('@arcgis/core/Map.js', () => ({ default: class {
@@ -47,7 +48,7 @@ const subject: PropertyRecord = {
 };
 const props = { subject, candidates: [], selectedId: null, onSelect: vi.fn(), activeContext: null, onContextChange: vi.fn(), contextMarkers: [], selectedContextId: null, onSelectContext: vi.fn(), marketVisibility: { recordedSales: false, activeListings: false }, onMarketVisibilityChange: vi.fn() };
 beforeEach(() => {
-  sdk.views.length = 0; sdk.layers.length = 0; sdk.basemapFailure = false;
+  sdk.views.length = 0; sdk.layers.length = 0; sdk.basemaps.length = 0; sdk.basemapFailure = false;
   vi.stubEnv('VITE_ARCGIS_API_KEY', 'synthetic-public-basemap-key-for-tests');
   window.history.replaceState({}, '', '/dashboard?mapUnavailableMode=1');
 });
@@ -112,19 +113,25 @@ it('replaces subject and market graphics completely when its data changes', asyn
 
 it('reuses the MapView, clears switched context geometry, and removes every watcher on unmount', async () => {
   const view = render(<MapShell {...props} activeContext="wildfire" />);
-  await waitFor(() => expect(sdk.layers.find(layer => layer.title === 'CAL FIRE Fire Hazard Severity Zones')?.graphics.length).toBe(2));
+  await waitFor(() => expect(sdk.layers.filter(layer => layer.title.startsWith('CAL FIRE'))).toHaveLength(2));
+  const wildfireLayers = sdk.layers.filter(layer => layer.title.startsWith('CAL FIRE'));
+  for (const layer of wildfireLayers) expect(layer).toMatchObject({ minScale: 0, maxScale: 0,
+    definitionExpression: "FHSZ_Description IN ('Moderate','High','Very High')", renderer: { type: 'unique-value', field: 'FHSZ_Description' } });
+  expect(sdk.basemaps).toEqual([{ style: { id: 'arcgis/light-gray', apiKey: 'synthetic-public-basemap-key-for-tests' } }]);
   const mapView = sdk.views[0]!;
   expect(sdk.views).toHaveLength(1);
   expect(sdk.layers.find(layer => layer.title === 'Subject Property')?.graphics).toHaveLength(1);
   view.rerender(<MapShell {...props} activeContext="faults" />);
   await waitFor(() => expect(sdk.layers.some(layer => layer.title.includes('CGS'))).toBe(true));
-  expect(sdk.layers.find(layer => layer.title === 'CAL FIRE Fire Hazard Severity Zones')?.graphics).toHaveLength(0);
+  expect(wildfireLayers.every(layer => vi.mocked(layer.destroy).mock.calls.length === 1)).toBe(true);
+  expect(sdk.layers.find(layer => layer.title.includes('CGS'))).toMatchObject({ minScale: 0, maxScale: 0,
+    renderer: { type: 'simple', symbol: { type: 'simple-line', color: '#654675' } } });
   expect(sdk.layers.find(layer => layer.title === 'Subject Property')?.graphics).toHaveLength(1);
   expect(sdk.views).toHaveLength(1);
   view.rerender(<MapShell {...props} />);
   view.unmount();
   expect(mapView.destroy).toHaveBeenCalledOnce();
-  expect(mapView.handles).toHaveLength(3);
+  expect(mapView.handles).toHaveLength(2);
   expect(mapView.handles.every(remove => remove.mock.calls.length === 1)).toBe(true);
 });
 
@@ -144,6 +151,19 @@ it('ignores a late hit test for context graphics that have been removed', async 
   await act(async () => { finish?.({ results: [{ graphic: { attributes: { id: 'synthetic-place', context: true } } }] }); });
   expect(select).not.toHaveBeenCalled();
   expect(sdk.layers.find(layer => layer.title === 'Selected Context')?.graphics).toHaveLength(0);
+});
+
+it('isolates government layer errors from core markers and clears the notice when switching layers', async () => {
+  const rendered = render(<MapShell {...props} activeContext="wildfire" />);
+  await waitFor(() => expect(sdk.layers.filter(layer => layer.title.startsWith('CAL FIRE'))).toHaveLength(2));
+  const layer = sdk.layers.find(layer => layer.title.startsWith('CAL FIRE'))!;
+  await act(async () => { sdk.views[0]!.events['layerview-create-error']?.({ layer }); });
+  expect(screen.getByText('Selected government map overlay unavailable. Property markers remain visible.')).toBeTruthy();
+  expect(sdk.layers.find(layer => layer.title === 'Subject Property')?.graphics).toHaveLength(1);
+  expect(sdk.views[0]!.destroy).not.toHaveBeenCalled();
+  rendered.rerender(<MapShell {...props} activeContext="faults" />);
+  await waitFor(() => expect(sdk.layers.some(layer => layer.title.includes('CGS'))).toBe(true));
+  expect(screen.queryByText('Selected government map overlay unavailable. Property markers remain visible.')).toBeNull();
 });
 
 it('draws purple school circles, fits them with the subject once, and synchronizes selection without resetting the view', async () => {

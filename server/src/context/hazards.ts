@@ -34,8 +34,8 @@ function pointQuery(point: Point, outFields: string, returnGeometry = false): UR
     inSR: '4326', outSR: '4326', spatialRel: 'esriSpatialRelIntersects', where: '1=1', outFields,
     returnGeometry: String(returnGeometry), resultRecordCount: returnGeometry ? '500' : '5' });
 }
-function features(payload: unknown): Json[] {
-  if (object(payload)?.exceededTransferLimit === true) throw new Error('TRUNCATED_GIS_FEATURES');
+function features(payload: unknown, allowPage = false): Json[] {
+  if (!allowPage && object(payload)?.exceededTransferLimit === true) throw new Error('TRUNCATED_GIS_FEATURES');
   const value = object(payload)?.features;
   if (!Array.isArray(value)) throw new Error('GIS_FEATURES');
   const parsed = value.map(object);
@@ -122,7 +122,28 @@ export class CgsFaultProvider implements FaultProvider {
     query.set('returnGeometry', 'true');
     query.set('resultRecordCount', '500');
     query.set('geometryPrecision', '6');
-    const candidates = normalizeFaultCandidates(await this.gis.query(OfficialGisLayers.faultTraces, query));
+    query.set('orderByFields', 'OBJECTID ASC');
+    // Read all bounded query windows before ranking. Spatial queries can return
+    // fewer features than their requested window while still signalling more.
+    const collected: Json[] = [];
+    const seenIds = new Set<number>();
+    for (let page = 0; ; page++) {
+      if (page >= 8) throw new Error('FAULT_PAGE_LIMIT');
+      query.set('resultOffset', String(page * 500));
+      const payload = await this.gis.query(OfficialGisLayers.faultTraces, new URLSearchParams(query));
+      const rows = features(payload, true);
+      if (rows.length > 500 || collected.length + rows.length > 4000) throw new Error('FAULT_LIMIT');
+      const more = object(payload)?.exceededTransferLimit === true;
+      if (more && rows.length === 0) throw new Error('EMPTY_FAULT_PAGE');
+      if (more || page > 0) for (const row of rows) {
+        const id = object(row.attributes)?.OBJECTID;
+        if (typeof id !== 'number' || !Number.isSafeInteger(id) || seenIds.has(id)) throw new Error('FAULT_PAGE_IDENTITY');
+        seenIds.add(id);
+      }
+      collected.push(...rows);
+      if (!more) break;
+    }
+    const candidates = normalizeFaultCandidates({ features: collected });
     if (candidates.length === 0) return { status: 'NO_NEARBY_FEATURES', nearestFeatureName: null, distanceMiles: null };
     const ranked = candidates.map(candidate => ({ name: candidate.name, distance: pointToFaultMiles(point, candidate.paths) })).sort((a, b) => a.distance - b.distance);
     const nearest = ranked[0]!;

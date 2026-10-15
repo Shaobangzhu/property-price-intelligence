@@ -61,15 +61,23 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
       let reported = false;
       const report = (kind: 'MAPVIEW_INIT_ERROR' | 'BASEMAP_LOAD_ERROR', error: unknown) => { reported = true; if (!disposed) reportMapFailure(kind, error); };
       try {
-        const [{ default: esriConfig }, { default: Map }, { default: MapView }, { default: GraphicsLayer }, { default: Graphic }] = await Promise.all([
+        const [{ default: esriConfig }, { default: Map }, { default: MapView }, { default: GraphicsLayer }, { default: Graphic }, { default: Basemap }] = await Promise.all([
           import('@arcgis/core/config.js'), import('@arcgis/core/Map.js'), import('@arcgis/core/views/MapView.js'),
-          import('@arcgis/core/layers/GraphicsLayer.js'), import('@arcgis/core/Graphic.js')
+          import('@arcgis/core/layers/GraphicsLayer.js'), import('@arcgis/core/Graphic.js'), import('@arcgis/core/Basemap.js')
         ]);
         if (disposed || !container.current) return;
         stage = 'MAPVIEW_INIT_ERROR';
         // ArcGIS error details may contain the browser token; show our redacted fallback instead.
         esriConfig.log.level = 'none';
-        esriConfig.apiKey = key;
+        // Scope the credential to the basemap, leaving public government layers anonymous.
+        esriConfig.apiKey = undefined;
+        esriConfig.apiKeys.basemapStyles = key;
+        // Basemap webmaps can reference portal items before their layer-level
+        // keys are assigned by the SDK. Keep those requests scoped as well.
+        esriConfig.apiKeys.scopes = [{ token: key, urls: [
+          'https://www.arcgis.com/sharing/rest/', 'https://basemaps-api.arcgis.com/',
+          'https://basemapstyles-api.arcgis.com/', 'https://basemaps.arcgis.com/', 'https://tiles.arcgis.com/'
+        ] }];
         const subjectLayer = new GraphicsLayer({ title: 'Subject Property' });
         const salesLayer = new GraphicsLayer({ title: 'Recorded Sales', visible: marketVisibilityRef.current.recordedSales });
         const listingsLayer = new GraphicsLayer({ title: 'Active Listings', visible: marketVisibilityRef.current.activeListings });
@@ -78,43 +86,12 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
           listingsLayer.visible = marketVisibilityRef.current.activeListings;
         };
         const contextLayer = new GraphicsLayer({ title: 'Selected Context' });
-        const wildfireLayer = new GraphicsLayer({ title: 'CAL FIRE Fire Hazard Severity Zones', opacity: 0.55 });
-        const map = new Map({ basemap: 'arcgis/light-gray', layers: [wildfireLayer, salesLayer, listingsLayer, contextLayer, subjectLayer] });
+        const map = new Map({ basemap: new Basemap({ style: { id: 'arcgis/light-gray', apiKey: key } }), layers: [salesLayer, listingsLayer, contextLayer, subjectLayer] });
         let governmentLayers: InstanceType<typeof import('@arcgis/core/layers/FeatureLayer.js').default>[] = [];
         let governmentRevision = 0;
-        let wildfireQueryRevision = 0;
-        let wildfireAbort: AbortController | null = null;
         let view: InstanceType<typeof MapView>;
-        const loadWildfire = async (revision: number) => {
-          const queryRevision = ++wildfireQueryRevision;
-          if (!view?.ready || revision !== governmentRevision) return;
-          wildfireAbort?.abort();
-          const controller = new AbortController();
-          wildfireAbort = controller;
-          const timeout = setTimeout(() => controller.abort(), 8000);
-          try {
-            const results = await Promise.all(governmentLayers.map(layer => layer.queryFeatures({ geometry: view.extent,
-              spatialRelationship: 'intersects', outFields: ['FHSZ_Description'], returnGeometry: true, num: 500,
-              maxAllowableOffset: view.resolution * 2 }, { signal: controller.signal })));
-            if (disposed || revision !== governmentRevision || queryRevision !== wildfireQueryRevision) return;
-            if (results.some(result => result.exceededTransferLimit || result.features.length >= 500)) throw new Error('WILDFIRE_LIMIT');
-            const colors: Record<string, string> = { Moderate: '#eadb69', High: '#ec9b53', 'Very High': '#ce6570' };
-            wildfireLayer.removeAll();
-            for (const result of results) for (const feature of result.features) {
-              const color = colors[String(feature.attributes?.FHSZ_Description)];
-              if (color && feature.geometry) wildfireLayer.add(new Graphic({ geometry: feature.geometry,
-                symbol: { type: 'simple-fill', color, outline: { color, width: 0.5 } } }));
-            }
-            setOverlayUnavailable(false);
-          } catch { if (!disposed && revision === governmentRevision && queryRevision === wildfireQueryRevision) { wildfireLayer.removeAll(); setOverlayUnavailable(true); } }
-          finally { clearTimeout(timeout); if (wildfireAbort === controller) wildfireAbort = null; }
-        };
         const sync = (context: MapContext | null) => {
           const revision = ++governmentRevision;
-          wildfireQueryRevision++;
-          wildfireAbort?.abort();
-          wildfireAbort = null;
-          wildfireLayer.removeAll();
           for (const layer of governmentLayers) { map.remove(layer); layer.destroy(); }
           governmentLayers = [];
           const specs = governmentLayerSpecs(context);
@@ -122,16 +99,21 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
           void import('@arcgis/core/layers/FeatureLayer.js').then(({ default: FeatureLayer }) => {
             if (disposed || revision !== governmentRevision) return;
             governmentLayers = specs.map(spec => new FeatureLayer({ url: spec.url, title: spec.title, opacity: spec.opacity, popupEnabled: false,
-              renderer: context === 'faults' ? { type: 'simple', symbol: { type: 'simple-line', color: '#654675', width: 2 } } : undefined }));
-            if (context === 'faults') for (const layer of governmentLayers) map.add(layer, 0);
-            else void loadWildfire(revision);
+              minScale: 0, maxScale: 0,
+              definitionExpression: context === 'wildfire' ? "FHSZ_Description IN ('Moderate','High','Very High')" : undefined,
+              renderer: context === 'faults' ? { type: 'simple', symbol: { type: 'simple-line', color: '#654675', width: 2 } }
+                : { type: 'unique-value', field: 'FHSZ_Description', uniqueValueInfos: [
+                  { value: 'Moderate', symbol: { type: 'simple-fill', color: '#eadb69', outline: { color: '#eadb69', width: 0.5 } } },
+                  { value: 'High', symbol: { type: 'simple-fill', color: '#ec9b53', outline: { color: '#ec9b53', width: 0.5 } } },
+                  { value: 'Very High', symbol: { type: 'simple-fill', color: '#ce6570', outline: { color: '#ce6570', width: 0.5 } } }
+                ] } }));
+            for (const layer of governmentLayers) map.add(layer, 0);
           }).catch(() => { if (!disposed && revision === governmentRevision) setOverlayUnavailable(true); });
         };
         syncGovernment.current = sync;
         view = new MapView({ container: container.current, map, center: [data.current.subject.longitude!, data.current.subject.latitude!], zoom: 13,
           constraints: { minZoom: 3, maxZoom: 19 } });
         sync(activeContextRef.current);
-        const stationary = view.watch('stationary', value => { if (value && activeContextRef.current === 'wildfire') void loadWildfire(governmentRevision); });
         const popup = (title: string, detail: string) => ({ title, content: () => { const element = document.createElement('div'); element.textContent = detail; return element; } });
         const draw = () => {
           const { subject: current, candidates: items, selectedId: selected } = data.current;
@@ -216,18 +198,17 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         });
         let layerFailed = false;
         const layerError = view.on('layerview-create-error', event => {
-          if (event.layer === wildfireLayer || governmentLayers.includes(event.layer as (typeof governmentLayers)[number])) {
+          if (governmentLayers.includes(event.layer as (typeof governmentLayers)[number])) {
             if (!disposed) setOverlayUnavailable(true);
           } else if ([subjectLayer, salesLayer, listingsLayer, contextLayer].includes(event.layer as typeof subjectLayer)) {
             layerFailed = true; if (!disposed) setStatus('unavailable');
           }
         });
-        destroy = () => { click.remove(); layerError.remove(); stationary.remove(); governmentRevision++; wildfireQueryRevision++; wildfireAbort?.abort(); syncGovernment.current = null; syncMarket.current = null; redraw.current = null; redrawContext.current = null; for (const layer of governmentLayers) if (!map.layers.includes(layer)) layer.destroy(); view.destroy(); };
+        destroy = () => { click.remove(); layerError.remove(); governmentRevision++; syncGovernment.current = null; syncMarket.current = null; redraw.current = null; redrawContext.current = null; for (const layer of governmentLayers) if (!map.layers.includes(layer)) layer.destroy(); view.destroy(); };
         await Promise.all([
           view.when().catch(error => { report('MAPVIEW_INIT_ERROR', error); throw error; }),
           map.basemap?.loadAll().catch(error => { report('BASEMAP_LOAD_ERROR', error); throw error; })
         ]);
-        if (activeContextRef.current === 'wildfire') void loadWildfire(governmentRevision);
         if (!disposed && !layerFailed) setStatus('ready');
       } catch (error) { if (!disposed) { if (!reported) reportMapFailure(stage, error); setStatus('unavailable'); } }
     })();

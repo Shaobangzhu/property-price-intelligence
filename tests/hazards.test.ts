@@ -67,6 +67,26 @@ describe('CGS mapped fault traces', () => {
     expect((await service.getFaults(id)).status).toBe('UNAVAILABLE');
   });
 
+  it('reads complete spatial-query windows before ranking, even when a truncated page has fewer than 500 rows', async () => {
+    const query = vi.fn(async (_url: string, params: URLSearchParams) => params.get('resultOffset') === '0'
+      ? { features: [feature({ OBJECTID: 1, FLT_NAME: 'Far trace' }, { paths: [[[-122.2, 37.7], [-122.2, 37.9]]] })], exceededTransferLimit: true }
+      : { features: [feature({ OBJECTID: 2, FLT_NAME: 'Near trace' }, { paths: [[[-122.4, 37.7], [-122.4, 37.9]]] })] });
+    expect(await new CgsFaultProvider({ query }).check(point)).toMatchObject({ status: 'NEAREST_MAPPED_FAULT', nearestFeatureName: 'Near trace' });
+    expect(query.mock.calls.map(([, params]) => params.get('resultOffset'))).toEqual(['0', '500']);
+    expect(query.mock.calls.every(([, params]) => params.get('orderByFields') === 'OBJECTID ASC')).toBe(true);
+  });
+
+  it('rejects repeating pages and bounds a perpetually truncated query without claiming the nearest trace', async () => {
+    const row = (id: number) => feature({ OBJECTID: id, FLT_NAME: 'Synthetic trace' }, { paths: [[[-122.4, 37.7], [-122.4, 37.9]]] });
+    const repeated = vi.fn(async () => ({ features: [row(1)], exceededTransferLimit: true }));
+    await expect(new CgsFaultProvider({ query: repeated }).check(point)).rejects.toThrow('FAULT_PAGE_IDENTITY');
+    expect(repeated).toHaveBeenCalledTimes(2);
+    let id = 0;
+    const truncated = vi.fn(async () => ({ features: [row(++id)], exceededTransferLimit: true }));
+    await expect(new CgsFaultProvider({ query: truncated }).check(point)).rejects.toThrow('FAULT_PAGE_LIMIT');
+    expect(truncated).toHaveBeenCalledTimes(8);
+  });
+
   it('bounds outbound government GIS calls and never exposes remote error payloads', async () => {
     const transport = vi.fn(async () => Response.json({ error: { code: 403, details: ['opaque remote data'] } })) as unknown as typeof fetch;
     const gis = new OfficialArcGisQuery(transport);
