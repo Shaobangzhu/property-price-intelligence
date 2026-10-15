@@ -9,6 +9,9 @@ export const DEMO_ORIGIN = 'http://127.0.0.1:4173';
 export async function startDemoServer() {
   const server = await createServer({
     configFile: false, mode: 'test', root: fileURLToPath(new URL('../../client', import.meta.url)), envDir: false, plugins: [react()],
+    // Different mode/defines produce different optimized SDK chunk names. Never
+    // replace the live dev server's lazy Popup/Calcite modules during E2E/demo.
+    cacheDir: 'node_modules/.vite-demo',
     server: { host: '127.0.0.1', port: 4173, strictPort: true },
     define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('/api'), 'import.meta.env.VITE_ARCGIS_API_KEY': JSON.stringify('') }
   });

@@ -3,9 +3,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { MarketComparableCandidate, PropertyRecord } from '@ppi/shared';
 import { MapShell } from './MapShell.js';
+import { marketPopup, textPopup } from './popupContent.js';
 
 type Layer = { title: string; visible: boolean; graphics: unknown[]; destroy: () => void };
-type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn>; openPopup: ReturnType<typeof vi.fn>; closePopup: ReturnType<typeof vi.fn> };
+type PopupFeature = { attributes?: Record<string, unknown> };
+type View = { destroy: ReturnType<typeof vi.fn>; handles: ReturnType<typeof vi.fn>[]; events: Record<string, (event: unknown) => void>; hitTest: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn>; openPopup: ReturnType<typeof vi.fn>; closePopup: ReturnType<typeof vi.fn>; when: ReturnType<typeof vi.fn>; popup: { selectedFeature: PopupFeature | null } };
 const sdk = vi.hoisted(() => ({ views: [] as View[], layers: [] as Layer[], basemaps: [] as object[], basemapFailure: false }));
 vi.mock('@arcgis/core/Basemap.js', () => ({ default: class { constructor(value: object) { sdk.basemaps.push(value); } } }));
 vi.mock('@arcgis/core/config.js', () => ({ default: { log: { level: 'none' }, apiKey: '', apiKeys: {} } }));
@@ -33,9 +35,11 @@ vi.mock('@arcgis/core/views/MapView.js', () => ({ default: class {
   events: Record<string, (event: unknown) => void> = {};
   hitTest = vi.fn(async () => ({ results: [] }));
   goTo = vi.fn<(target: unknown, options?: unknown) => Promise<void>>(async () => {});
-  openPopup = vi.fn(async () => {}); closePopup = vi.fn();
+  popup = { selectedFeature: null as PopupFeature | null };
+  openPopup = vi.fn(async (options: { features: PopupFeature[] }) => { this.popup.selectedFeature = options.features[0] ?? null; });
+  closePopup = vi.fn(() => { this.popup.selectedFeature = null; });
   constructor() { sdk.views.push(this); }
-  when() { return Promise.resolve(); }
+  when = vi.fn(async () => {});
   on(name: string, callback: (event: unknown) => void) { this.events[name] = callback; const remove = vi.fn(); this.handles.push(remove); return { remove }; }
   watch(_name: string, callback: (event: unknown) => void) { this.events.stationary = callback; const remove = vi.fn(); this.handles.push(remove); return { remove }; }
 } }));
@@ -221,4 +225,75 @@ it('selects grocery graphics/popups by place ID after reordering and clears stal
   rendered.rerender(<MapShell {...props} />);
   expect(mapView.closePopup).toHaveBeenCalledOnce();
   expect(sdk.layers.find(layer => layer.title === 'Selected Context')?.graphics).toEqual([]);
+});
+
+it.each(['RECORDED_SALE', 'ACTIVE_ASKING_PRICE'] as const)('builds non-empty %s graphic content with its own ID and semantics', async kind => {
+  const item = candidate('evidence-id', kind);
+  render(<MapShell {...props} candidates={[item]} marketVisibility={{ recordedSales: true, activeListings: true }} />);
+  await waitFor(() => expect(sdk.views).toHaveLength(1));
+  const layer = sdk.layers.find(layer => layer.title === (kind === 'RECORDED_SALE' ? 'Recorded Sales' : 'Active Listings'))!;
+  const graphic = layer.graphics[0] as { attributes: { id: string }; popupTemplate: ReturnType<typeof marketPopup> };
+  expect(graphic.attributes.id).toBe(item.id);
+  const content = graphic.popupTemplate.content().textContent!;
+  expect(content).toContain(item.address);
+  expect(content).toContain('$500,000');
+  expect(content).toContain('2026-09-01');
+  expect(content).toContain('1.00 mi away');
+  expect(content).toContain(kind === 'RECORDED_SALE' ? 'Sold Price' : 'Asking Price');
+  expect(content).not.toContain(kind === 'RECORDED_SALE' ? 'Asking Price' : 'Sold Price');
+});
+
+it('renders missing fields and provider markup as safe non-empty text with fresh DOM nodes', () => {
+  const template = marketPopup({ ...candidate('missing', 'RECORDED_SALE'), address: '<img src=x onerror=alert(1)>', price: null, eventDate: null, distanceMiles: null, propertyType: null });
+  const first = template.content(), second = template.content();
+  expect(first).not.toBe(second);
+  expect(first.textContent).toContain('<img src=x onerror=alert(1)>');
+  expect(first.textContent).toContain('Sold Price: Unavailable');
+  expect(first.textContent).toContain('Sale date: Unavailable');
+  expect(first.textContent).toContain('Distance unavailable');
+  expect(first.querySelector('img')).toBeNull();
+  expect(textPopup('Nearby school', 'Synthetic school · Type unavailable · Rating unavailable').content().textContent).toContain('Synthetic school');
+});
+
+it('opens row-selected market graphics by ID, closes hidden evidence, and clears old property popups', async () => {
+  const candidates = [candidate('sale-a', 'RECORDED_SALE'), candidate('listing-b', 'ACTIVE_ASKING_PRICE')];
+  const rendered = render(<MapShell {...props} candidates={candidates} selectedId="sale-a" marketVisibility={{ recordedSales: true, activeListings: true }} />);
+  await waitFor(() => expect(sdk.views[0]?.openPopup).toHaveBeenCalledOnce());
+  const mapView = sdk.views[0]!;
+  const sale = mapView.openPopup.mock.lastCall![0].features[0];
+  expect(sale.attributes.id).toBe('sale-a');
+  expect(mapView.openPopup.mock.lastCall![0].location).toBe(sale.geometry);
+  rendered.rerender(<MapShell {...props} candidates={candidates} selectedId="sale-a" marketVisibility={{ recordedSales: false, activeListings: true }} />);
+  expect(mapView.popup.selectedFeature).toBeNull();
+  rendered.rerender(<MapShell {...props} candidates={candidates} selectedId="listing-b" marketVisibility={{ recordedSales: false, activeListings: true }} />);
+  await waitFor(() => expect(mapView.openPopup.mock.lastCall![0].features[0].attributes.id).toBe('listing-b'));
+  expect(mapView.openPopup.mock.lastCall![0].features[0].popupTemplate.content().textContent).toContain('Asking Price');
+  rendered.rerender(<MapShell {...props} subject={{ ...subject, id: 'new-subject' }} />);
+  expect(mapView.popup.selectedFeature).toBeNull();
+});
+
+it('opens school content from the matching Graphic and closes it on a context switch', async () => {
+  const markers = [{ id: 'school-a', kind: 'school' as const, label: 'Synthetic nearby school', detail: 'Public · 0.5 mi · nearby only', latitude: 37.01, longitude: -122.01 }];
+  const rendered = render(<MapShell {...props} activeContext="schools" contextMarkers={markers} selectedContextId="school-a" />);
+  await waitFor(() => expect(sdk.views[0]?.openPopup).toHaveBeenCalledOnce());
+  const mapView = sdk.views[0]!;
+  const graphic = mapView.openPopup.mock.lastCall![0].features[0];
+  expect(graphic.attributes.id).toBe('school-a');
+  expect(graphic.popupTemplate.content().textContent).toContain('Synthetic nearby school');
+  expect(mapView.openPopup.mock.lastCall![0].location).toBe(graphic.geometry);
+  rendered.rerender(<MapShell {...props} activeContext="grocery" />);
+  expect(mapView.popup.selectedFeature).toBeNull();
+});
+
+it('cancels a pending popup open when its market layer is hidden', async () => {
+  const candidates = [candidate('sale-a', 'RECORDED_SALE')];
+  const rendered = render(<MapShell {...props} candidates={candidates} marketVisibility={{ recordedSales: true, activeListings: false }} />);
+  await waitFor(() => expect(sdk.views).toHaveLength(1));
+  const mapView = sdk.views[0]!;
+  let release: (() => void) | undefined;
+  mapView.when.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  rendered.rerender(<MapShell {...props} candidates={candidates} selectedId="sale-a" marketVisibility={{ recordedSales: true, activeListings: false }} />);
+  rendered.rerender(<MapShell {...props} candidates={candidates} selectedId="sale-a" />);
+  await act(async () => { release?.(); });
+  expect(mapView.openPopup).not.toHaveBeenCalled();
 });

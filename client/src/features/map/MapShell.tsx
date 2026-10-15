@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MapContext, MarketComparableCandidate, PropertyRecord } from '@ppi/shared';
 import type { ContextMarker } from './contextMarkers.js';
 import { governmentLayerSpecs } from './governmentLayers.js';
+import { marketPopup, textPopup } from './popupContent.js';
 
 const contexts: { value: MapContext; label: string }[] = [
   { value: 'schools', label: 'Schools' }, { value: 'grocery', label: 'Grocery' },
@@ -81,17 +82,31 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         const subjectLayer = new GraphicsLayer({ title: 'Subject Property' });
         const salesLayer = new GraphicsLayer({ title: 'Recorded Sales', visible: marketVisibilityRef.current.recordedSales });
         const listingsLayer = new GraphicsLayer({ title: 'Active Listings', visible: marketVisibilityRef.current.activeListings });
+        let view: InstanceType<typeof MapView>;
+        let popupRevision = 0;
+        let pendingPopup: InstanceType<typeof Graphic> | null = null;
+        const closePopup = () => { popupRevision++; pendingPopup = null; view?.closePopup(); };
+        const openGraphicPopup = (graphic: InstanceType<typeof Graphic>) => {
+          const revision = ++popupRevision;
+          pendingPopup = graphic;
+          void view.when().then(() => {
+            if (!disposed && revision === popupRevision) return view.openPopup({ features: [graphic], location: graphic.geometry as __esri.Point });
+          }).catch(() => {}).finally(() => { if (revision === popupRevision) pendingPopup = null; });
+        };
         syncMarket.current = () => {
           salesLayer.visible = marketVisibilityRef.current.recordedSales;
           listingsLayer.visible = marketVisibilityRef.current.activeListings;
+          const id = (pendingPopup ?? view?.popup?.selectedFeature)?.attributes?.id;
+          if (data.current.candidates.some(item => item.id === id && !isMarketVisible(item, marketVisibilityRef.current))) closePopup();
         };
         const contextLayer = new GraphicsLayer({ title: 'Selected Context' });
         const map = new Map({ basemap: new Basemap({ style: { id: 'arcgis/light-gray', apiKey: key } }), layers: [salesLayer, listingsLayer, contextLayer, subjectLayer] });
         let governmentLayers: InstanceType<typeof import('@arcgis/core/layers/FeatureLayer.js').default>[] = [];
         let governmentRevision = 0;
-        let view: InstanceType<typeof MapView>;
         const sync = (context: MapContext | null) => {
           const revision = ++governmentRevision;
+          const feature = pendingPopup ?? view?.popup?.selectedFeature;
+          if (feature?.attributes?.context && feature.attributes.contextKind !== context) closePopup();
           for (const layer of governmentLayers) { map.remove(layer); layer.destroy(); }
           governmentLayers = [];
           const specs = governmentLayerSpecs(context);
@@ -114,61 +129,57 @@ function ArcgisMap({ subject, candidates, selectedId, onSelect, contextMarkers, 
         view = new MapView({ container: container.current, map, center: [data.current.subject.longitude!, data.current.subject.latitude!], zoom: 13,
           constraints: { minZoom: 3, maxZoom: 19 } });
         sync(activeContextRef.current);
-        const popup = (title: string, detail: string) => ({ title, content: () => { const element = document.createElement('div'); element.textContent = detail; return element; } });
+        let drawnSubjectId = data.current.subject.id;
+        let lastMarketSelection: string | null = null;
         const draw = () => {
           const { subject: current, candidates: items, selectedId: selected } = data.current;
+          const changedSubject = current.id !== drawnSubjectId;
+          if (changedSubject) closePopup();
+          drawnSubjectId = current.id;
           subjectLayer.removeAll(); salesLayer.removeAll(); listingsLayer.removeAll();
           if (current.latitude !== null && current.longitude !== null) subjectLayer.add(new Graphic({
             geometry: { type: 'point', latitude: current.latitude, longitude: current.longitude },
             symbol: { type: 'simple-marker', style: 'diamond', size: 22, color: '#174f9d', outline: { color: '#fff', width: 2 } },
-            attributes: { id: current.id }, popupTemplate: popup('Subject property', `${current.formattedAddress} · ${current.propertyType ?? 'Type unavailable'} · ${current.effectiveValues.bedrooms ?? '—'} beds · ${current.effectiveValues.bathrooms ?? '—'} baths`)
+            attributes: { id: current.id }, popupTemplate: textPopup('Subject property', `${current.formattedAddress} · ${current.propertyType ?? 'Type unavailable'} · ${current.effectiveValues.bedrooms ?? '—'} beds · ${current.effectiveValues.bathrooms ?? '—'} baths`)
           }));
           for (const item of items) {
             if (item.latitude === null || item.longitude === null) continue;
             const sale = item.evidenceType === 'RECORDED_SALE';
             const layer = sale ? salesLayer : listingsLayer;
-            layer.add(new Graphic({
+            const graphic = new Graphic({
               geometry: { type: 'point', latitude: item.latitude, longitude: item.longitude },
               symbol: { type: 'simple-marker', style: sale ? 'circle' : 'square', size: item.id === selected ? 18 : 12,
                 color: sale ? '#17896f' : '#d98b35', outline: { color: item.id === selected ? '#172b43' : '#fff', width: item.id === selected ? 3 : 1.5 } },
-              attributes: { id: item.id }, popupTemplate: popup(sale ? 'Recorded sale' : 'Active listing', `${item.address} · ${sale ? 'Sold Price' : 'Asking Price'}: ${item.price === null ? 'Unavailable' : `$${item.price.toLocaleString()}`}`)
-            }));
+              attributes: { id: item.id }, popupTemplate: marketPopup(item)
+            });
+            layer.add(graphic);
+            if (item.id === selected && layer.visible && (changedSubject || selected !== lastMarketSelection)) openGraphicPopup(graphic);
           }
+          lastMarketSelection = selected;
         };
         redraw.current = draw;
         draw();
         let schoolFitKey = '';
-        let groceryPopupId: string | null = null;
-        let groceryPopupRevision = 0;
-        let hadGroceryContext = false;
+        let lastContextSelection: string | null = null;
         const drawContext = () => {
-          const popupRevision = ++groceryPopupRevision;
-          const wasGroceryContext = hadGroceryContext;
-          hadGroceryContext = activeContextRef.current === 'grocery';
           contextLayer.removeAll();
-          const groceryGraphics = new globalThis.Map<string, InstanceType<typeof Graphic>>();
+          const contextGraphics = new globalThis.Map<string, InstanceType<typeof Graphic>>();
           const schoolGraphics: InstanceType<typeof Graphic>[] = [];
           for (const marker of contextData.current.contextMarkers) {
             const graphic = new Graphic({
             geometry: { type: 'point', latitude: marker.latitude, longitude: marker.longitude },
             symbol: { type: 'simple-marker', style: 'circle', size: marker.id === contextData.current.selectedContextId ? 20 : 14,
               color: marker.kind === 'school' ? '#7552a3' : '#bf5268', outline: { color: marker.id === contextData.current.selectedContextId ? '#172b43' : '#fff', width: marker.id === contextData.current.selectedContextId ? 3 : 1.5 } },
-            attributes: { id: marker.id, placeId: marker.kind === 'grocery' ? marker.id : undefined, context: true }, popupTemplate: popup(marker.kind === 'school' ? 'Nearby school' : 'Grocery place', `${marker.label} · ${marker.detail}`)
+            attributes: { id: marker.id, placeId: marker.kind === 'grocery' ? marker.id : undefined, context: true, contextKind: marker.kind === 'school' ? 'schools' : 'grocery' }, popupTemplate: textPopup(marker.kind === 'school' ? 'Nearby school' : 'Grocery place', `${marker.label} · ${marker.detail}`)
             });
             contextLayer.add(graphic);
-            if (marker.kind === 'grocery') groceryGraphics.set(marker.id, graphic);
+            contextGraphics.set(marker.id, graphic);
             if (marker.kind === 'school') schoolGraphics.push(graphic);
           }
-          const selectedGrocery = activeContextRef.current === 'grocery' ? groceryGraphics.get(contextData.current.selectedContextId ?? '') : undefined;
-          if (selectedGrocery) {
-            groceryPopupId = String(selectedGrocery.attributes.placeId);
-            void view.when().then(() => {
-              if (!disposed && groceryPopupRevision === popupRevision) return view.openPopup({ features: [selectedGrocery], location: selectedGrocery.geometry as __esri.Point });
-            }).catch(() => {});
-          } else if (groceryPopupId !== null || wasGroceryContext || hadGroceryContext) {
-            groceryPopupId = null;
-            view.closePopup();
-          }
+          const selectedContext = contextGraphics.get(contextData.current.selectedContextId ?? '');
+          if (selectedContext && selectedContext.attributes.id !== lastContextSelection) openGraphicPopup(selectedContext);
+          else if (!selectedContext && lastContextSelection !== null) closePopup();
+          lastContextSelection = selectedContext ? String(selectedContext.attributes.id) : null;
           const key = activeContextRef.current === 'schools' && schoolGraphics.length
             ? `${data.current.subject.id}:${JSON.stringify(contextData.current.contextMarkers)}` : '';
           if (key && key !== schoolFitKey) {
